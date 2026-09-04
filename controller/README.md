@@ -1,0 +1,93 @@
+# Agent controller
+
+The layer between the backend and the model services. A planner turns an
+English query into a validated JSON plan; a deterministic executor runs it over
+HTTP against the services and two local geometry tools. The controller never
+imports a model, and the planner never produces a coordinate or a count.
+
+## Running
+
+```
+python -m venv .venv
+.venv/Scripts/pip install -r requirements.txt   # or .venv/bin/pip
+.venv/Scripts/python tests.py
+```
+
+Mocks are on by default (`SATQUERY_MOCK=1`), so everything runs with no
+services and no network. Every mock result carries `"mock": true`. To point a
+tool at a real service:
+
+```
+SATQUERY_MOCK_GROUND=0
+SATQUERY_GROUND_URL=https://<tunnel>/ground
+```
+
+One tool at a time, so integration problems land one at a time.
+
+## Service contract
+
+This is what the controller sends and what it checks on the way back. It is
+the contract in the implementation doc, not the pixel-bbox one in
+`backend/README.md`, which describes the earlier in-process mocks. The two
+differ in path, argument names and geometry format; this one is binding.
+
+Every service is `POST /<tool>` with a JSON body, returning either a bare
+result object or `{"status": "success", "result": {...}}`.
+
+| tool | request | result |
+|---|---|---|
+| `vqa` | `{image_id, question}` | `{answer, confidence}` |
+| `ground` | `{image_id, phrase}` | `{objects: [{label, geometry, confidence}]}` |
+| `change_detect` | `{image_id_t1, image_id_t2}` | `{regions: [{type, geometry, confidence}], changed_area_km2, change_mask_id}` |
+| `cross_modal` | `{optical_image_id, sar_image_id, phrase}` | `{regions: [{label, geometry, confidence}], summary}` |
+
+Rules the controller enforces on every response, mock or real:
+
+- every declared field present; list fields are lists
+- every `geometry` is a GeoJSON `Polygon` or `MultiPolygon` in **EPSG:4326
+  (lon, lat)**; anything else is rejected before it reaches the next step
+- every item's geometry lies mostly inside the footprint of the image it was
+  computed from — this catches a swapped lon/lat, a missing reprojection, and
+  a result from the wrong tile
+- every item has a numeric `confidence` in `[0, 1]`
+
+BigEarthNet patches are stored in UTM. Reproject inside the adapter with
+`rasterio.warp.transform_geom(src.crs, "EPSG:4326", geom)`. The footprint
+check is there for the day someone forgets.
+
+Paste a sample response into `tools._check_shape` and `tools._check_items` to
+find out whether it conforms before writing any model code.
+
+## Plan format
+
+```json
+{
+  "steps": [
+    {"id": "s1", "tool": "change_detect",
+     "args": {"image_id_t1": "img_2023_opt", "image_id_t2": "img_2026_opt"}},
+    {"id": "s2", "tool": "ground",
+     "args": {"image_id": "img_2026_opt", "phrase": "buildings"}},
+    {"id": "s3", "tool": "filter_by_region",
+     "args": {"objects": "$s2.objects", "regions": "$s1.regions"}}
+  ],
+  "answer_from": "s3",
+  "reasoning": "New buildings are buildings in the later image inside changed regions."
+}
+```
+
+`$<step_id>.<field>` is the only way data moves between steps. `plan.validate`
+rejects, with a message the model can act on: unknown tools, missing or extra
+arguments, references forwards or to fields a tool does not return, references
+of the wrong kind, image ids that are not loaded, literal geometry or counts,
+two images of different places, a change comparison that runs backwards in
+time, and an optical/SAR pair the wrong way round.
+
+## Layout
+
+| file | what |
+|---|---|
+| `geometry.py` | EPSG:4326 validation and repair, geodesic area, overlap |
+| `session.py` | loaded images: id, sensor, date, footprint, cloud flag, pairing |
+| `tools.py` | tool registry, HTTP and mock adapters, `filter_by_region`, `count` |
+| `plan.py` | plan format and validator |
+| `tests.py` | run with `python tests.py` or pytest |
