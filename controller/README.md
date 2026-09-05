@@ -90,4 +90,23 @@ time, and an optical/SAR pair the wrong way round.
 | `session.py` | loaded images: id, sensor, date, footprint, cloud flag, pairing |
 | `tools.py` | tool registry, HTTP and mock adapters, `filter_by_region`, `count` |
 | `plan.py` | plan format and validator |
+| `planner.py` | LLM query -> validated `Plan`, with retry and keyword fallback |
+| `executor.py` | runs a `Plan`: `$ref` resolution, short-circuiting, partial results, confidence |
+| `controller.py` | `handle_query()`, the single public entry point |
 | `tests.py` | run with `python tests.py` or pytest |
+
+## Running a query end to end
+
+```python
+from session import demo_session
+from controller import handle_query
+
+result = handle_query("Find buildings constructed after 2023", demo_session())
+print(result["answer"])
+```
+
+With no `SATQUERY_LLM_API_KEY` set, `planner.py` skips the LLM and plans with
+its keyword fallback (`result["plan"]["source"] == "fallback"`), so the above
+runs fully offline against the mocks. Set `SATQUERY_LLM_API_KEY` (and
+optionally `SATQUERY_LLM_BASE_URL` / `SATQUERY_LLM_MODEL`, which default to
+Groq's `openai/gpt-oss-20b`) to route through a real LLM instead.

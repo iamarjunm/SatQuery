@@ -3,5 +3,8 @@ shapely>=2.1
 pyproj>=3.6
 requests>=2.31
 
+# planner LLM client (Groq, OpenRouter and Ollama are all OpenAI-compatible)
+openai>=1.0
+
 # real imagery (day 3, not needed for mock work)
 rasterio>=1.3

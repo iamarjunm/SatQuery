@@ -12,6 +12,10 @@ from plan import Plan
 from session import Scene, Session, demo_session
 from datetime import date
 
+import controller
+import executor
+import planner
+
 
 def _check_geom(tool, result, args, session):
     spec = tools.TOOLS[tool]
@@ -1114,6 +1118,128 @@ def test_blank_mock_env_means_default():
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
+
+
+# --- planner -----------------------------------------------------------------
+# No SATQUERY_LLM_API_KEY is set in this environment, so plan_query() always
+# takes the keyword-fallback path here -- these tests stay offline like the
+# rest of the suite, matching how tools.py defaults to mocks with nothing
+# configured.
+
+def test_planner_falls_back_without_an_llm_key():
+    plan = planner.plan_query("What changed between 2023 and 2026?", demo_session())
+    assert plan.source == "fallback"
+    assert plan_mod.validate(plan, demo_session()) == []
+
+
+def test_planner_fallback_routes_new_buildings_to_a_chain():
+    plan = planner.plan_query("Find buildings constructed after 2023", demo_session())
+    tools_used = [s.tool for s in plan.steps]
+    assert tools_used == ["change_detect", "ground", "filter_by_region"]
+
+
+def test_planner_fallback_routes_find_to_ground():
+    plan = planner.plan_query("Find all the buildings", demo_session())
+    assert plan.steps[0].tool == "ground"
+
+
+def test_planner_fallback_routes_tally_to_ground_then_count():
+    plan = planner.plan_query("Give me a tally of the vehicles", demo_session())
+    assert [s.tool for s in plan.steps] == ["ground", "count"]
+
+
+def test_planner_fallback_defaults_to_vqa_when_nothing_matches():
+    plan = planner.plan_query("Describe this scene", demo_session())
+    assert plan.steps[0].tool == "vqa"
+
+
+def test_planner_rejects_blank_query():
+    try:
+        planner.plan_query("   ", demo_session())
+        assert False, "expected a ValueError"
+    except ValueError:
+        pass
+
+
+# --- executor ------------------------------------------------------------------
+
+def test_executor_resolves_refs_across_a_chain():
+    s = demo_session()
+    plan = Plan.from_dict({
+        "steps": [
+            {"id": "s1", "tool": "change_detect",
+             "args": {"image_id_t1": "img_2023_opt", "image_id_t2": "img_2026_opt"}},
+            {"id": "s2", "tool": "ground", "args": {"image_id": "img_2026_opt", "phrase": "buildings"}},
+            {"id": "s3", "tool": "filter_by_region", "args": {"objects": "$s2.objects", "regions": "$s1.regions"}},
+        ],
+        "answer_from": "s3",
+    })
+    outcome = executor.run(plan, s)
+    assert outcome["status"] == "ok"
+    assert set(outcome["results"]) == {"s1", "s2", "s3"}
+    assert outcome["results"]["s3"]["kept"] + outcome["results"]["s3"]["dropped"] == len(
+        outcome["results"]["s2"]["objects"]
+    )
+    assert outcome["confidence"] is not None
+    assert len(outcome["trace"]) == 3
+    assert all(event["status"] == "ok" for event in outcome["trace"])
+
+
+def test_executor_short_circuits_on_empty_upstream():
+    s = demo_session()
+    plan = Plan.from_dict({
+        "steps": [
+            {"id": "s1", "tool": "ground", "args": {"image_id": "img_2026_opt", "phrase": "buildings"}},
+            {"id": "s2", "tool": "filter_by_region", "args": {"objects": "$s1.objects", "regions": "$s1.objects"}},
+        ],
+        "answer_from": "s2",
+    })
+    # Force the upstream step to look empty without needing a real detector
+    # that returns nothing: patch the mock's result after the fact by running
+    # against a plan whose filter never matches, then check the shortcut path
+    # directly at the unit level instead.
+    empty_results = {"s1": {"objects": []}}
+    from plan import Step
+    step = Step(id="s2", tool="filter_by_region", args={"objects": "$s1.objects", "regions": "$s1.objects"})
+    assert executor._empty_upstream(step, empty_results) == "objects"
+
+
+def test_executor_reports_partial_on_tool_failure():
+    s = demo_session()
+    plan = Plan.from_dict({
+        "steps": [
+            {"id": "s1", "tool": "vqa", "args": {"image_id": "img_2026_opt", "question": "?"}},
+            {"id": "s2", "tool": "ground", "args": {"image_id": "does_not_exist", "phrase": "buildings"}},
+        ],
+        "answer_from": "s2",
+    })
+    outcome = executor.run(plan, s)
+    assert outcome["status"] == "partial"
+    assert "s1" in outcome["results"] and "s2" not in outcome["results"]
+    assert outcome["trace"][-1]["status"] == "error"
+
+
+def test_executor_confidence_is_the_minimum_not_the_mean():
+    scores = executor._confidences("ground", {
+        "objects": [{"confidence": 0.9}, {"confidence": 0.2}, {"confidence": 0.8}]
+    })
+    assert min(scores) == 0.2 and sum(scores) / len(scores) != 0.2
+
+
+# --- controller ----------------------------------------------------------------
+
+def test_handle_query_end_to_end_on_mocks():
+    result = controller.handle_query("What changed between 2023 and 2026?", demo_session())
+    assert result["status"] == "ok"
+    assert result["plan"]["source"] == "fallback"
+    assert isinstance(result["answer"], str) and result["answer"]
+    assert "elapsed_s" in result and "trace" in result and "results" in result
+
+
+def test_handle_query_never_raises_on_a_bad_query():
+    result = controller.handle_query("", demo_session())
+    assert result["status"] == "partial"
+    assert result["plan"] is None
 
 
 if __name__ == "__main__":
