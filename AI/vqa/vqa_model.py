@@ -10,10 +10,6 @@ from geochat.mm_utils import tokenizer_image_token, get_model_name_from_path
 
 
 class VQAModel:
-    """Wraps a GeoChat checkpoint behind the team's /vqa contract:
-    answer(image_path, question) -> {"answer": str, "confidence": float}
-    """
-
     def __init__(self, model_path: str, model_base: str | None = None, conv_mode: str = "llava_v1", load_4bit: bool = True):
         model_name = get_model_name_from_path(model_path)
         self.tokenizer, self.model, self.image_processor, _ = load_pretrained_model(
@@ -70,9 +66,6 @@ class VQAModel:
 
     @staticmethod
     def _mean_token_confidence(scores, generated_ids) -> float:
-        """Average softmax probability the model assigned to each token it actually
-        generated -- a standard proxy for generation confidence when the model has no
-        native confidence head."""
         if len(scores) == 0:
             return 0.0
         probs = []
