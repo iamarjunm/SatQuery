@@ -406,9 +406,9 @@ should say so.
 | `SATQUERY_MOCK` | `1` | all remote tools answer from mocks. Set `0` / `off` for real services |
 | `SATQUERY_MOCK_<TOOL>` | — | per-tool override, e.g. `SATQUERY_MOCK_GROUND=0` |
 | `SATQUERY_<TOOL>_URL` | `http://127.0.0.1:800N/<tool>` | vqa 8001, ground 8002, change_detect 8003, cross_modal 8004 |
-| `SATQUERY_LLM_API_KEY` | — | unset means keyword fallback only |
-| `SATQUERY_LLM_BASE_URL` | Groq | any OpenAI-compatible endpoint; Ollama is `http://localhost:11434/v1` |
-| `SATQUERY_LLM_MODEL` | `openai/gpt-oss-20b` | check against the provider's live model list |
+| `SATQUERY_LLM_API_KEY` | — | unset means keyword fallback only. A Google AI Studio key for the default endpoint |
+| `SATQUERY_LLM_BASE_URL` | `https://generativelanguage.googleapis.com/v1beta/openai/` (Gemini) | any OpenAI-compatible endpoint. Groq: `https://api.groq.com/openai/v1`; Ollama: `http://localhost:11434/v1` |
+| `SATQUERY_LLM_MODEL` | `gemini-2.5-flash` | must use the endpoint's own naming (Groq: `openai/gpt-oss-20b`, Ollama: `gpt-oss:20b`); check the provider's live model list |
 
 Swap one tool at a time to real services so integration problems arrive one at
 a time.
