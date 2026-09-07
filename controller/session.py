@@ -6,6 +6,9 @@ actually exist. The validator uses it to reject plans that invent an image_id.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Iterable, Iterator, Literal
@@ -254,3 +257,28 @@ def demo_session() -> Session:
         Scene("img_cloud_sar", "sar", "sentinel-1", date(2026, 7, 2), _AOI_CLOUDY,
               resolution_m=10, pair_id="img_cloud_opt"),
     ])
+
+
+# Scene-level cloud cover above this is treated as "cloudy" for routing. It is
+# the same 0.4 threshold the implementation doc gives the planner's sensor rule.
+CLOUDY_ABOVE_PCT = 40.0
+
+
+def manifest_session(path: str | Path = Path(__file__).with_name("images") / "manifest.json") -> Session:
+    """Real imagery: one Scene per entry in images/manifest.json, as written by
+    fetch_chips.py. Bounds are read off each GeoTIFF, not trusted from the
+    manifest, so the footprint the planner sees is the footprint the file has.
+    A manifest entry may carry `cloudy`, `pair_id` and `labels` explicitly;
+    otherwise cloudiness comes from the scene cloud cover."""
+    path = Path(path)
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    scenes = []
+    for image_id, m in manifest.items():
+        cloudy = bool(m.get("cloudy", m.get("scene_cloud_cover_pct", 0) > CLOUDY_ABOVE_PCT))
+        scenes.append(Scene.from_geotiff(
+            str(path.with_name(m["file"])), image_id,
+            acquired=date.fromisoformat(m["acquired"]), modality=m["modality"],
+            source=m.get("source", "unknown"), resolution_m=m.get("resolution_m"),
+            cloudy=cloudy, pair_id=m.get("pair_id"), labels=tuple(m.get("labels", ())),
+        ))
+    return Session(scenes)

@@ -34,7 +34,7 @@ _load_dotenv(Path(__file__).with_name(".env"))
 
 from controller import handle_query  # noqa: E402  (after .env so the planner sees the key)
 from planner import providers  # noqa: E402
-from session import demo_session  # noqa: E402
+from session import demo_session, manifest_session  # noqa: E402
 
 DEFAULT_QUERIES = [
     "Find buildings constructed after 2023",
@@ -54,11 +54,14 @@ def main(queries: list[str]) -> int:
     else:
         print("planner : keyword fallback only (no SATQUERY_LLM_* / SATQUERY_LLM_FALLBACK_* set)")
     print(f"mocks   : SATQUERY_MOCK={os.getenv('SATQUERY_MOCK', '<unset -> on>')}")
-    print(f"images  :\n{demo_session().describe()}\n")
+    manifest = Path(__file__).with_name("images") / "manifest.json"
+    session = (lambda: manifest_session(manifest)) if manifest.is_file() else demo_session
+    print(f"images  : {'real chips from images/manifest.json' if manifest.is_file() else 'synthetic demo session'}")
+    print(session().describe() + "\n")
 
     llm_planned = 0
     for query in queries:
-        result = handle_query(query, demo_session())
+        result = handle_query(query, session())
         plan = result.get("plan", {})
         source = plan.get("source")
         llm_planned += source == "llm"

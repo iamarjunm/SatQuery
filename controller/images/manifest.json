@@ -1,0 +1,571 @@
+{
+  "img_2023_opt": {
+    "image_id": "img_2023_opt",
+    "file": "img_2023_opt.tif",
+    "preview": "img_2023_opt.png",
+    "modality": "optical",
+    "source": "sentinel-2",
+    "acquired": "2023-09-09",
+    "scene_cloud_cover_pct": 0.0,
+    "resolution_m": 10,
+    "crs": "EPSG:32633",
+    "size_px": [
+      530,
+      565
+    ],
+    "bounds_epsg4326": [
+      16.34862,
+      48.189163,
+      16.421317,
+      48.24084
+    ],
+    "stac_id": "S2B_33UXP_20230909_1_L2A",
+    "href": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/33/U/XP/2023/9/S2B_33UXP_20230909_1_L2A/TCI.tif"
+  },
+  "img_2026_opt": {
+    "image_id": "img_2026_opt",
+    "file": "img_2026_opt.tif",
+    "preview": "img_2026_opt.png",
+    "modality": "optical",
+    "source": "sentinel-2",
+    "acquired": "2026-08-09",
+    "scene_cloud_cover_pct": 0.0,
+    "resolution_m": 10,
+    "crs": "EPSG:32633",
+    "size_px": [
+      530,
+      565
+    ],
+    "bounds_epsg4326": [
+      16.34862,
+      48.189163,
+      16.421317,
+      48.24084
+    ],
+    "stac_id": "S2C_33UWP_20260809_0_L2A",
+    "href": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/33/U/WP/2026/8/S2C_33UWP_20260809_0_L2A/TCI.tif"
+  },
+  "img_cloud_opt": {
+    "image_id": "img_cloud_opt",
+    "file": "img_cloud_opt.tif",
+    "preview": "img_cloud_opt.png",
+    "modality": "optical",
+    "source": "sentinel-2",
+    "acquired": "2026-08-19",
+    "scene_cloud_cover_pct": 98.7,
+    "resolution_m": 10,
+    "crs": "EPSG:32633",
+    "size_px": [
+      530,
+      565
+    ],
+    "bounds_epsg4326": [
+      16.34862,
+      48.189163,
+      16.421317,
+      48.24084
+    ],
+    "stac_id": "S2C_33UXP_20260819_0_L2A",
+    "href": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/33/U/XP/2026/8/S2C_33UXP_20260819_0_L2A/TCI.tif"
+  },
+  "jnpt_port_2023_opt": {
+    "image_id": "jnpt_port_2023_opt",
+    "file": "jnpt_port_2023_opt.tif",
+    "preview": "jnpt_port_2023_opt.png",
+    "modality": "optical",
+    "source": "sentinel-2",
+    "acquired": "2023-02-21",
+    "scene_cloud_cover_pct": 0.0,
+    "resolution_m": 10,
+    "crs": "EPSG:32643",
+    "size_px": [
+      744,
+      562
+    ],
+    "bounds_epsg4326": [
+      72.919309,
+      18.919228,
+      72.990548,
+      18.970767
+    ],
+    "stac_id": "S2A_43QBA_20230221_0_L2A",
+    "href": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/43/Q/BA/2023/2/S2A_43QBA_20230221_0_L2A/TCI.tif",
+    "site": "jnpt_port",
+    "purpose": "container port; 'how many ships' ground + count"
+  },
+  "jnpt_port_2026_opt": {
+    "image_id": "jnpt_port_2026_opt",
+    "file": "jnpt_port_2026_opt.tif",
+    "preview": "jnpt_port_2026_opt.png",
+    "modality": "optical",
+    "source": "sentinel-2",
+    "acquired": "2026-03-12",
+    "scene_cloud_cover_pct": 0.0,
+    "resolution_m": 10,
+    "crs": "EPSG:32643",
+    "size_px": [
+      744,
+      562
+    ],
+    "bounds_epsg4326": [
+      72.919309,
+      18.919228,
+      72.990548,
+      18.970767
+    ],
+    "stac_id": "S2B_43QBA_20260312_0_L2A",
+    "href": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/43/Q/BA/2026/3/S2B_43QBA_20260312_0_L2A/TCI.tif",
+    "site": "jnpt_port",
+    "purpose": "container port; 'how many ships' ground + count"
+  },
+  "rondonia_2023_opt": {
+    "image_id": "rondonia_2023_opt",
+    "file": "rondonia_2023_opt.tif",
+    "preview": "rondonia_2023_opt.png",
+    "modality": "optical",
+    "source": "sentinel-2",
+    "acquired": "2023-06-29",
+    "scene_cloud_cover_pct": 0.0,
+    "resolution_m": 10,
+    "crs": "EPSG:32720",
+    "size_px": [
+      767,
+      553
+    ],
+    "bounds_epsg4326": [
+      -63.10008,
+      -9.94996,
+      -63.030102,
+      -9.899929
+    ],
+    "stac_id": "S2B_20LMQ_20230629_0_L2A",
+    "href": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/20/L/MQ/2023/6/S2B_20LMQ_20230629_0_L2A/TCI.tif",
+    "site": "rondonia",
+    "purpose": "deforestation frontier; vegetation_loss change"
+  },
+  "rondonia_2026_opt": {
+    "image_id": "rondonia_2026_opt",
+    "file": "rondonia_2026_opt.tif",
+    "preview": "rondonia_2026_opt.png",
+    "modality": "optical",
+    "source": "sentinel-2",
+    "acquired": "2026-07-08",
+    "scene_cloud_cover_pct": 0.0,
+    "resolution_m": 10,
+    "crs": "EPSG:32720",
+    "size_px": [
+      767,
+      553
+    ],
+    "bounds_epsg4326": [
+      -63.10008,
+      -9.94996,
+      -63.030102,
+      -9.899929
+    ],
+    "stac_id": "S2C_20LMQ_20260708_0_L2A",
+    "href": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/20/L/MQ/2026/7/S2C_20LMQ_20260708_0_L2A/TCI.tif",
+    "site": "rondonia",
+    "purpose": "deforestation frontier; vegetation_loss change"
+  },
+  "navi_mumbai_2023_opt": {
+    "image_id": "navi_mumbai_2023_opt",
+    "file": "navi_mumbai_2023_opt.tif",
+    "preview": "navi_mumbai_2023_opt.png",
+    "modality": "optical",
+    "source": "sentinel-2",
+    "acquired": "2023-03-03",
+    "scene_cloud_cover_pct": 0.0,
+    "resolution_m": 10,
+    "crs": "EPSG:32643",
+    "size_px": [
+      850,
+      673
+    ],
+    "bounds_epsg4326": [
+      73.019266,
+      18.959257,
+      73.100679,
+      19.020892
+    ],
+    "stac_id": "S2A_43QBB_20230303_0_L2A",
+    "href": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/43/Q/BB/2023/3/S2A_43QBB_20230303_0_L2A/TCI.tif",
+    "site": "navi_mumbai",
+    "purpose": "airport under construction; 'built after 2023' chain"
+  },
+  "navi_mumbai_2026_opt": {
+    "image_id": "navi_mumbai_2026_opt",
+    "file": "navi_mumbai_2026_opt.tif",
+    "preview": "navi_mumbai_2026_opt.png",
+    "modality": "optical",
+    "source": "sentinel-2",
+    "acquired": "2026-02-25",
+    "scene_cloud_cover_pct": 0.0,
+    "resolution_m": 10,
+    "crs": "EPSG:32643",
+    "size_px": [
+      850,
+      673
+    ],
+    "bounds_epsg4326": [
+      73.019266,
+      18.959257,
+      73.100679,
+      19.020892
+    ],
+    "stac_id": "S2C_43QBB_20260225_0_L2A",
+    "href": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/43/Q/BB/2026/2/S2C_43QBB_20260225_0_L2A/TCI.tif",
+    "site": "navi_mumbai",
+    "purpose": "airport under construction; 'built after 2023' chain"
+  },
+  "jewar_2023_opt": {
+    "image_id": "jewar_2023_opt",
+    "file": "jewar_2023_opt.tif",
+    "preview": "jewar_2023_opt.png",
+    "modality": "optical",
+    "source": "sentinel-2",
+    "acquired": "2023-02-03",
+    "scene_cloud_cover_pct": 0.0,
+    "resolution_m": 10,
+    "crs": "EPSG:32643",
+    "size_px": [
+      800,
+      682
+    ],
+    "bounds_epsg4326": [
+      77.568487,
+      28.13855,
+      77.651389,
+      28.201603
+    ],
+    "stac_id": "S2B_43RGM_20230203_0_L2A",
+    "href": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/43/R/GM/2023/2/S2B_43RGM_20230203_0_L2A/TCI.tif",
+    "site": "jewar",
+    "purpose": "greenfield airport build-out; change detection, construction"
+  },
+  "jewar_2026_opt": {
+    "image_id": "jewar_2026_opt",
+    "file": "jewar_2026_opt.tif",
+    "preview": "jewar_2026_opt.png",
+    "modality": "optical",
+    "source": "sentinel-2",
+    "acquired": "2026-03-06",
+    "scene_cloud_cover_pct": 0.0,
+    "resolution_m": 10,
+    "crs": "EPSG:32643",
+    "size_px": [
+      800,
+      682
+    ],
+    "bounds_epsg4326": [
+      77.568487,
+      28.13855,
+      77.651389,
+      28.201603
+    ],
+    "stac_id": "S2A_43RGM_20260306_2_L2A",
+    "href": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/43/R/GM/2026/3/S2A_43RGM_20260306_2_L2A/TCI.tif",
+    "site": "jewar",
+    "purpose": "greenfield airport build-out; change detection, construction"
+  },
+  "udaipur_2023_opt": {
+    "image_id": "udaipur_2023_opt",
+    "file": "udaipur_2023_opt.tif",
+    "preview": "udaipur_2023_opt.png",
+    "modality": "optical",
+    "source": "sentinel-2",
+    "acquired": "2023-04-02",
+    "scene_cloud_cover_pct": 0.0,
+    "resolution_m": 10,
+    "crs": "EPSG:32643",
+    "size_px": [
+      818,
+      783
+    ],
+    "bounds_epsg4326": [
+      73.639158,
+      24.549361,
+      73.720671,
+      24.620768
+    ],
+    "stac_id": "S2A_43RCH_20230402_0_L2A",
+    "href": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/43/R/CH/2023/4/S2A_43RCH_20230402_0_L2A/TCI.tif",
+    "site": "udaipur",
+    "purpose": "city lakes; 'find the water bodies', water-level change"
+  },
+  "udaipur_2026_opt": {
+    "image_id": "udaipur_2026_opt",
+    "file": "udaipur_2026_opt.tif",
+    "preview": "udaipur_2026_opt.png",
+    "modality": "optical",
+    "source": "sentinel-2",
+    "acquired": "2026-02-15",
+    "scene_cloud_cover_pct": 0.0,
+    "resolution_m": 10,
+    "crs": "EPSG:32643",
+    "size_px": [
+      818,
+      783
+    ],
+    "bounds_epsg4326": [
+      73.639158,
+      24.549361,
+      73.720671,
+      24.620768
+    ],
+    "stac_id": "S2C_43RCH_20260215_0_L2A",
+    "href": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/43/R/CH/2026/2/S2C_43RCH_20260215_0_L2A/TCI.tif",
+    "site": "udaipur",
+    "purpose": "city lakes; 'find the water bodies', water-level change"
+  },
+  "bhadla_2023_opt": {
+    "image_id": "bhadla_2023_opt",
+    "file": "bhadla_2023_opt.tif",
+    "preview": "bhadla_2023_opt.png",
+    "modality": "optical",
+    "source": "sentinel-2",
+    "acquired": "2023-03-06",
+    "scene_cloud_cover_pct": 0,
+    "resolution_m": 10,
+    "crs": "EPSG:32642",
+    "size_px": [
+      806,
+      684
+    ],
+    "bounds_epsg4326": [
+      71.868424,
+      27.498348,
+      71.951568,
+      27.561726
+    ],
+    "stac_id": "S2A_42RYR_20230306_0_L2A",
+    "href": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/42/R/YR/2023/3/S2A_42RYR_20230306_0_L2A/TCI.tif",
+    "site": "bhadla",
+    "purpose": "solar park; grounding + land-cover VQA"
+  },
+  "bhadla_2026_opt": {
+    "image_id": "bhadla_2026_opt",
+    "file": "bhadla_2026_opt.tif",
+    "preview": "bhadla_2026_opt.png",
+    "modality": "optical",
+    "source": "sentinel-2",
+    "acquired": "2026-01-19",
+    "scene_cloud_cover_pct": 0.0,
+    "resolution_m": 10,
+    "crs": "EPSG:32642",
+    "size_px": [
+      806,
+      684
+    ],
+    "bounds_epsg4326": [
+      71.868424,
+      27.498348,
+      71.951568,
+      27.561726
+    ],
+    "stac_id": "S2C_42RYR_20260119_0_L2A",
+    "href": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/42/R/YR/2026/1/S2C_42RYR_20260119_0_L2A/TCI.tif",
+    "site": "bhadla",
+    "purpose": "solar park; grounding + land-cover VQA"
+  },
+  "singrauli_2023_opt": {
+    "image_id": "singrauli_2023_opt",
+    "file": "singrauli_2023_opt.tif",
+    "preview": "singrauli_2023_opt.png",
+    "modality": "optical",
+    "source": "sentinel-2",
+    "acquired": "2023-02-14",
+    "scene_cloud_cover_pct": 0.0,
+    "resolution_m": 10,
+    "crs": "EPSG:32644",
+    "size_px": [
+      821,
+      674
+    ],
+    "bounds_epsg4326": [
+      82.609216,
+      24.109187,
+      82.69077,
+      24.170911
+    ],
+    "stac_id": "S2B_44QPM_20230214_0_L2A",
+    "href": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/44/Q/PM/2023/2/S2B_44QPM_20230214_0_L2A/TCI.tif",
+    "site": "singrauli",
+    "purpose": "opencast coal mine; expansion change, land-cover VQA"
+  },
+  "singrauli_2026_opt": {
+    "image_id": "singrauli_2026_opt",
+    "file": "singrauli_2026_opt.tif",
+    "preview": "singrauli_2026_opt.png",
+    "modality": "optical",
+    "source": "sentinel-2",
+    "acquired": "2026-03-05",
+    "scene_cloud_cover_pct": 0.0,
+    "resolution_m": 10,
+    "crs": "EPSG:32644",
+    "size_px": [
+      821,
+      674
+    ],
+    "bounds_epsg4326": [
+      82.609216,
+      24.109187,
+      82.69077,
+      24.170911
+    ],
+    "stac_id": "S2C_44QPM_20260305_0_L2A",
+    "href": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/44/Q/PM/2026/3/S2C_44QPM_20260305_0_L2A/TCI.tif",
+    "site": "singrauli",
+    "purpose": "opencast coal mine; expansion change, land-cover VQA"
+  },
+  "singapore_2023_opt": {
+    "image_id": "singapore_2023_opt",
+    "file": "singapore_2023_opt.tif",
+    "preview": "singapore_2023_opt.png",
+    "modality": "optical",
+    "source": "sentinel-2",
+    "acquired": "2023-09-27",
+    "scene_cloud_cover_pct": 10.7,
+    "resolution_m": 10,
+    "crs": "EPSG:32648",
+    "size_px": [
+      1113,
+      664
+    ],
+    "bounds_epsg4326": [
+      103.959923,
+      1.26994,
+      104.059979,
+      1.330044
+    ],
+    "stac_id": "S2A_48NUG_20230927_0_L2A",
+    "href": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/48/N/UG/2023/9/S2A_48NUG_20230927_0_L2A/TCI.tif",
+    "site": "singapore",
+    "purpose": "ship anchorage; 'how many ships' ground + count"
+  },
+  "singapore_2026_opt": {
+    "image_id": "singapore_2026_opt",
+    "file": "singapore_2026_opt.tif",
+    "preview": "singapore_2026_opt.png",
+    "modality": "optical",
+    "source": "sentinel-2",
+    "acquired": "2026-08-22",
+    "scene_cloud_cover_pct": 13.1,
+    "resolution_m": 10,
+    "crs": "EPSG:32648",
+    "size_px": [
+      1113,
+      664
+    ],
+    "bounds_epsg4326": [
+      103.959923,
+      1.26994,
+      104.059979,
+      1.330044
+    ],
+    "stac_id": "S2C_48NUG_20260822_0_L2A",
+    "href": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/48/N/UG/2026/8/S2C_48NUG_20260822_0_L2A/TCI.tif",
+    "site": "singapore",
+    "purpose": "ship anchorage; 'how many ships' ground + count"
+  },
+  "punjab_2023_opt": {
+    "image_id": "punjab_2023_opt",
+    "file": "punjab_2023_opt.tif",
+    "preview": "punjab_2023_opt.png",
+    "modality": "optical",
+    "source": "sentinel-2",
+    "acquired": "2023-01-22",
+    "scene_cloud_cover_pct": 0.0,
+    "resolution_m": 10,
+    "crs": "EPSG:32643",
+    "size_px": [
+      769,
+      670
+    ],
+    "bounds_epsg4326": [
+      75.699567,
+      30.849561,
+      75.780477,
+      30.910472
+    ],
+    "stac_id": "S2A_43REQ_20230122_0_L2A",
+    "href": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/43/R/EQ/2023/1/S2A_43REQ_20230122_0_L2A/TCI.tif",
+    "site": "punjab",
+    "purpose": "irrigated cropland; agriculture land-cover VQA"
+  },
+  "punjab_2026_opt": {
+    "image_id": "punjab_2026_opt",
+    "file": "punjab_2026_opt.tif",
+    "preview": "punjab_2026_opt.png",
+    "modality": "optical",
+    "source": "sentinel-2",
+    "acquired": "2026-02-15",
+    "scene_cloud_cover_pct": 0.0,
+    "resolution_m": 10,
+    "crs": "EPSG:32643",
+    "size_px": [
+      769,
+      670
+    ],
+    "bounds_epsg4326": [
+      75.699567,
+      30.849561,
+      75.780477,
+      30.910472
+    ],
+    "stac_id": "S2C_43REQ_20260215_0_L2A",
+    "href": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/43/R/EQ/2026/2/S2C_43REQ_20260215_0_L2A/TCI.tif",
+    "site": "punjab",
+    "purpose": "irrigated cropland; agriculture land-cover VQA"
+  },
+  "sundarbans_2023_opt": {
+    "image_id": "sundarbans_2023_opt",
+    "file": "sundarbans_2023_opt.tif",
+    "preview": "sundarbans_2023_opt.png",
+    "modality": "optical",
+    "source": "sentinel-2",
+    "acquired": "2024-02-08",
+    "scene_cloud_cover_pct": 0.0,
+    "resolution_m": 10,
+    "crs": "EPSG:32645",
+    "size_px": [
+      834,
+      674
+    ],
+    "bounds_epsg4326": [
+      88.749263,
+      21.849201,
+      88.830713,
+      21.910943
+    ],
+    "stac_id": "S2A_45QXE_20240208_0_L2A",
+    "href": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/45/Q/XE/2024/2/S2A_45QXE_20240208_0_L2A/TCI.tif",
+    "site": "sundarbans",
+    "purpose": "mangrove wetland; land-cover VQA, water grounding"
+  },
+  "sundarbans_2026_opt": {
+    "image_id": "sundarbans_2026_opt",
+    "file": "sundarbans_2026_opt.tif",
+    "preview": "sundarbans_2026_opt.png",
+    "modality": "optical",
+    "source": "sentinel-2",
+    "acquired": "2026-02-17",
+    "scene_cloud_cover_pct": 0.0,
+    "resolution_m": 10,
+    "crs": "EPSG:32645",
+    "size_px": [
+      834,
+      674
+    ],
+    "bounds_epsg4326": [
+      88.749263,
+      21.849201,
+      88.830713,
+      21.910943
+    ],
+    "stac_id": "S2C_45QXE_20260217_0_L2A",
+    "href": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/45/Q/XE/2026/2/S2C_45QXE_20260217_0_L2A/TCI.tif",
+    "site": "sundarbans",
+    "purpose": "mangrove wetland; land-cover VQA, water grounding"
+  }
+}

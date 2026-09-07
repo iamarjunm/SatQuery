@@ -1,0 +1,14 @@
+{
+ "backend": "gemini",
+ "model": "gemini-3.6-flash",
+ "tool": "vqa",
+ "args": {
+  "image_id": "udaipur_2026_opt",
+  "question": "Describe the land cover and the water bodies in this image."
+ },
+ "cached_at": "2026-09-08T03:00:05",
+ "result": {
+  "answer": "The image features a dense, light-colored urban area bordered by dry, brown hilly terrain and scattered patches of green vegetation. At the center lie two large, dark lakes containing small islands, connected to each other by narrow channels.",
+  "confidence": 0.7
+ }
+}
