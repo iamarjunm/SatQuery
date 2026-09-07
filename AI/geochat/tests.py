@@ -19,6 +19,8 @@ HERE = Path(__file__).resolve().parent
 CONTROLLER = HERE.parents[1] / "controller"
 sys.path.insert(0, str(CONTROLLER))
 
+from PIL import Image  # noqa: E402
+
 import service  # noqa: E402
 import tools  # noqa: E402  (controller)
 from session import manifest_session  # noqa: E402  (controller)
@@ -135,6 +137,119 @@ def test_controller_calls_the_agent_over_http():
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
+
+
+# --- gemini backend, offline ---------------------------------------------------------
+# The network call is replaced by a fake client. Under test: Gemini's JSON boxes
+# becoming GeoChat-format text, rotation to the next model on a quota error,
+# and the answer cache.
+
+class _FakeCompletions:
+    """Scripted chat.completions.create: per model, a string to return or an
+    exception to raise. Records which models were called."""
+
+    def __init__(self, script: dict):
+        self.script, self.calls = script, []
+
+    def create(self, *, model, messages, **kwargs):
+        self.calls.append(model)
+        outcome = self.script[model]
+        if isinstance(outcome, Exception):
+            raise outcome
+
+        class _Msg:
+            content = outcome
+
+        class _Choice:
+            message = _Msg()
+
+        class _Resp:
+            choices = [_Choice()]
+
+        return _Resp()
+
+
+def _gemini(script: dict, models: tuple) -> service.GeminiBackend:
+    backend = service.GeminiBackend(api_key="test-key", models=models)
+    backend.client = type("C", (), {})()
+    backend.client.chat = type("Chat", (), {})()
+    backend.client.chat.completions = _FakeCompletions(script)
+    return backend
+
+
+def test_gemini_boxes_become_geochat_text_on_the_100_grid():
+    raw = '{"objects": [{"label": "ship", "box_2d": [100, 200, 150, 260]}, {"label": "ship", "box_2d": [500, 500, 600, 700]}]}'
+    backend = _gemini({"m1": raw}, ("m1",))
+    text = backend.infer(Image.new("RGB", (100, 100)), service.REFER_PROMPT.format(phrase="ships"))
+    boxes = service.parse_boxes(text)
+    assert [b["label"] for b in boxes] == ["ship", "ship"]
+    # box_2d is [ymin, xmin, ymax, xmax] on 0-1000 -> x0,y0,x1,y1 on 0-100
+    assert (boxes[0]["x0"], boxes[0]["y0"], boxes[0]["x1"], boxes[0]["y1"]) == (20.0, 10.0, 26.0, 15.0)
+    assert backend.last_model == "m1"
+
+
+def test_gemini_empty_or_malformed_json_means_no_objects():
+    assert service.GeminiBackend._boxes_from_json('{"objects": []}') == []
+    assert service.GeminiBackend._boxes_from_json("no json here") == []
+    assert service.GeminiBackend._boxes_from_json('{"objects": [{"label": "x", "box_2d": [1, 2]}]}') == []
+    backend = _gemini({"m1": "Nothing found."}, ("m1",))
+    assert service.parse_boxes(backend.infer(Image.new("RGB", (10, 10)), "[refer] Give me the location of <p> cars </p>")) == []
+
+
+def test_gemini_rotates_to_the_next_model_on_quota_and_remembers_it():
+    quota = RuntimeError("Error code: 429 - quota exceeded for generate_content_free_tier_requests")
+    backend = _gemini({"m1": quota, "m2": "A river through farmland."}, ("m1", "m2"))
+    img = Image.new("RGB", (10, 10))
+    assert backend.infer(img, "What is here?") == "A river through farmland."
+    assert backend.client.chat.completions.calls == ["m1", "m2"]
+    assert backend.last_model == "m2"
+    # m1 is on cooldown now: the second call goes straight to m2.
+    backend.infer(img, "And now?")
+    assert backend.client.chat.completions.calls == ["m1", "m2", "m2"]
+
+
+def test_gemini_every_model_dry_is_a_clear_error_not_a_crash():
+    quota = RuntimeError("429 RESOURCE_EXHAUSTED")
+    backend = _gemini({"m1": quota, "m2": quota}, ("m1", "m2"))
+    status, body = service.respond(STORE, backend, "vqa", {"image_id": "img_2026_opt", "question": "?"})
+    assert status == 500 and "rate-limited or unavailable" in body["error"]
+    assert "m1" in body["error"] and "m2" in body["error"]
+
+
+def test_gemini_non_quota_errors_are_not_swallowed_by_rotation():
+    backend = _gemini({"m1": RuntimeError("Error code: 400 - bad image"), "m2": "unused"}, ("m1", "m2"))
+    try:
+        backend.infer(Image.new("RGB", (10, 10)), "?")
+    except RuntimeError as exc:
+        assert "bad image" in str(exc)
+    else:
+        raise AssertionError("a 400 must surface, not fall through to the next model")
+    assert backend.client.chat.completions.calls == ["m1"]
+
+
+def test_cache_serves_the_second_identical_call_without_the_model(tmp_dir=None):
+    import shutil
+    import tempfile
+
+    tmp = Path(tempfile.mkdtemp())
+    try:
+        cache = service.ResultCache(tmp)
+        backend = _gemini({"m1": "Built-up area beside a river."}, ("m1",))
+        args = {"image_id": "udaipur_2026_opt", "question": "Describe it."}
+        s1, b1 = service.respond(STORE, backend, "vqa", args, cache)
+        s2, b2 = service.respond(STORE, backend, "vqa", args, cache)
+        assert s1 == s2 == 200 and b1["result"] == b2["result"]
+        assert b2.get("cached") is True and "cached" not in b1
+        assert backend.client.chat.completions.calls == ["m1"]  # one model call for two requests
+        # Different question, different key.
+        service.respond(STORE, backend, "vqa", {**args, "question": "Anything else?"}, cache)
+        assert backend.client.chat.completions.calls == ["m1", "m1"]
+        # Extra request fields do not change the key; only the tool's own arguments do.
+        _, b4 = service.respond(STORE, backend, "vqa", {**args, "extra": 1}, cache)
+        assert b4.get("cached") is True
+        assert len(list(tmp.glob("vqa-udaipur_2026_opt-*.json"))) == 2
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 if __name__ == "__main__":

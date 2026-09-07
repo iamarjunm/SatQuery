@@ -1,6 +1,7 @@
-# the agent itself (runs on a laptop with --backend stub)
+# the agent itself (runs on a laptop with --backend stub or --backend gemini)
 pillow>=10
 rasterio>=1.3
+openai>=1.0        # Gemini's OpenAI-compatible endpoint; no Google SDK needed
 
 # the real backend, on a GPU box: install the GeoChat repo on top of these
 #   git clone https://github.com/mbzuai-oryx/GeoChat && pip install -e GeoChat

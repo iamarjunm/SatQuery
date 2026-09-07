@@ -33,6 +33,41 @@ answers with canned text and two boxes, one rotated, so the whole path except th
 is exercised: the contract, the pixel-to-lon/lat conversion, the footprint check, and
 the executor.
 
+## On a laptop, real answers: the Gemini backend
+
+Until GeoChat is running somewhere, Gemini vision is the agent's brain. No GPU, no
+install beyond `openai`, and it runs on the free tier. It reads the key from
+`GEMINI_API_KEY`, or from `SATQUERY_LLM_FALLBACK_API_KEY` in `controller/.env`, so the
+key the planner already has is enough.
+
+```
+.venv/Scripts/python service.py --backend gemini
+```
+
+Then the same four lines in `controller/.env` as for the stub. What is different from
+the stub:
+
+- **Real answers.** VQA sends the chip and the question. Grounding asks for boxes as
+  JSON on Gemini's 0-1000 grid and rewrites them into GeoChat's text format, so the
+  parser, the geometry and the controller do not know which model answered.
+- **Quota rotation.** The free tier allows a small number of requests a day per model,
+  and each model has its own allowance. On a 429 the model goes on cooldown for an
+  hour and the next one in the list is tried: `gemini-3.6-flash`, `gemini-3.5-flash`,
+  `gemini-3.5-flash-lite`, `gemini-flash-lite-latest`, `gemini-3.1-flash-lite`.
+  Override with `--models a,b,c` or `GEMINI_MODELS`. Every model dry is a 500 with an
+  error envelope naming each model, which the controller turns into a partial answer.
+- **Answer cache.** Every result is written to `cache/` keyed by tool and arguments.
+  A repeated query is served from disk with `"cached": true` and spends no call.
+  Rehearse the demo queries once and the demo costs nothing; commit `cache/` if the
+  whole team should share the warmed answers. `--no-cache` forces the model.
+- **Budget.** One agent call per VQA or grounding step. A demo query is one or two
+  calls, so a single model's daily quota is roughly ten queries and the rotation
+  gives roughly fifty. Paid billing on the same key removes the limit at a fraction
+  of a cent per call.
+- **Honesty.** A general vision model is weaker than GeoChat on satellite imagery.
+  Ships at 10 m are a few pixels and will be hit and miss. The `raw` field on every
+  grounding result holds the model's text so a miss is visible.
+
 ## On Kaggle, real model
 
 One notebook, GPU on (one T4 is enough in 4-bit), internet on. Cells:

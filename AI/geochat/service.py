@@ -10,14 +10,22 @@ Polygon in EPSG:4326. GeoChat answers in pixel space (boxes on a 0-100 grid
 with a rotation angle); the conversion to lon/lat happens here, using the
 GeoTIFF's own georeferencing, and pixel coordinates never leave this file.
 
-Two backends:
+Three backends:
   stub     canned answers, no GPU -- for running the service on a laptop and
            proving the contract, the geometry conversion and the controller
            wiring before anyone touches a model.
+  gemini   Gemini vision over the OpenAI-compatible endpoint. No GPU, no
+           install, real answers on the free tier. Rotates across models when
+           one hits its daily quota. The prototype's brain until GeoChat is up.
   geochat  the real model, mirrors geochat/eval/batch_geochat_grounding.py
            from the GeoChat repo. Needs a GPU and the repo installed.
 
+Every non-stub answer is cached on disk keyed by tool + arguments, so a
+rehearsed demo query never spends a second call.
+
 Run:  python service.py --backend stub                       # ports 8001 (vqa) + 8002 (ground)
+      python service.py --backend gemini                     # needs GEMINI_API_KEY (or the
+                                                             # controller's SATQUERY_LLM_FALLBACK_API_KEY)
       python service.py --backend geochat --model-path /kaggle/working/geochat-7B --load-4bit
       python service.py ... --port 8000                     # one port for both, then set
                                                              # SATQUERY_VQA_URL / SATQUERY_GROUND_URL
@@ -27,19 +35,43 @@ Images come from controller/images/manifest.json (or --images DIR).
 from __future__ import annotations
 
 import argparse
+import base64
+import hashlib
+import io
 import json
 import math
 import os
 import re
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Protocol
 
 from PIL import Image
 
-DEFAULT_IMAGES = Path(__file__).resolve().parents[2] / "controller" / "images"
+HERE = Path(__file__).resolve().parent
+DEFAULT_IMAGES = HERE.parents[1] / "controller" / "images"
+DEFAULT_CACHE = HERE / "cache"
 PORTS = {"vqa": 8001, "ground": 8002}  # the controller's defaults, see controller/tools.py
+
+
+def _load_dotenv(*paths: Path) -> None:
+    """KEY=value lines into os.environ without overriding what is already set.
+    The agent's own .env first, then the controller's, so one Gemini key in
+    controller/.env serves both the planner fallback and this agent."""
+    for path in paths:
+        if not path.is_file():
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            os.environ.setdefault(key.strip(), value.strip().strip('"').strip("'"))
+
+
+_load_dotenv(HERE / ".env", HERE.parents[1] / "controller" / ".env")
 
 # GeoChat produces no confidence. The contract needs one in [0, 1] and the
 # controller takes the minimum across a chain and abstains below 0.5, so these
@@ -67,11 +99,13 @@ def parse_boxes(text: str) -> list[dict[str, Any]]:
     labelled = {m.group(2): m.group(1) for m in _LABELLED.finditer(text)}
     boxes = []
     for m in _BRACED.finditer(text):
-        ints = [int(v) for v in re.findall(r"-?\d+", m.group(1))]
-        if len(ints) < 4:
+        # GeoChat writes integers; the Gemini backend writes decimals so a
+        # 1000-grid box is not rounded to whole percent.
+        nums = [float(v) for v in re.findall(r"-?\d+(?:\.\d+)?", m.group(1))]
+        if len(nums) < 4:
             continue
-        x0, y0, x1, y1 = ints[:4]
-        angle = ints[4] if len(ints) > 4 else 0
+        x0, y0, x1, y1 = nums[:4]
+        angle = nums[4] if len(nums) > 4 else 0
         x0, x1 = sorted((max(0, min(GRID, x0)), max(0, min(GRID, x1))))
         y0, y1 = sorted((max(0, min(GRID, y0)), max(0, min(GRID, y1))))
         if x1 - x0 <= 0 or y1 - y0 <= 0:
@@ -165,6 +199,154 @@ class StubBackend:
         return "The image shows a dense built-up area with roads, buildings and a river."
 
 
+class GeminiBackend:
+    """Gemini vision through Google's OpenAI-compatible endpoint. The
+    prototype's brain: no GPU, no install, real answers about the real chips.
+
+    Grounding: Gemini is asked for boxes as JSON on its documented 0-1000
+    grid ([ymin, xmin, ymax, xmax]); they are rewritten into GeoChat's text
+    format so ground() and parse_boxes() do not know which model answered.
+
+    Quota: the free tier allows a small number of requests a day per model,
+    and each model has its own allowance. A quota or not-found error puts
+    that model on cooldown and the next one in the list is tried, so a demo
+    survives one model running dry. Every model dry raises, and the service
+    turns that into an error envelope."""
+    name = "gemini"
+
+    DEFAULT_MODELS = ("gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.5-flash-lite",
+                      "gemini-flash-lite-latest", "gemini-3.1-flash-lite")
+    BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+    COOLDOWN_S = 60 * 60  # a rate-limited model is skipped for an hour
+    MAX_SIDE = 1024       # resize before sending; enough for a 5 km chip, fewer tokens
+
+    VQA_PREAMBLE = ("This is a Sentinel-2 true-colour satellite image at 10 m per pixel, "
+                    "about 5 km across. Answer the question in one or two plain sentences, "
+                    "naming only what is visible. Question: ")
+    GROUND_PROMPT = (
+        "This is a Sentinel-2 true-colour satellite image at 10 m per pixel. Find every "
+        "instance of: {phrase}. Return JSON only, in the form "
+        '{{"objects": [{{"label": "<short label>", "box_2d": [ymin, xmin, ymax, xmax]}}]}} '
+        "with box_2d on a 0-1000 grid over the image. If there are none, return "
+        '{{"objects": []}}. Tight boxes, one per distinct instance, at most 40.')
+
+    def __init__(self, api_key: str | None = None, models: tuple[str, ...] | None = None,
+                 base_url: str | None = None):
+        from openai import OpenAI
+
+        key = api_key or os.getenv("GEMINI_API_KEY") or os.getenv("SATQUERY_LLM_FALLBACK_API_KEY")
+        if not key:
+            raise RuntimeError("set GEMINI_API_KEY (or SATQUERY_LLM_FALLBACK_API_KEY in controller/.env)")
+        env_models = os.getenv("GEMINI_MODELS")
+        self.models = tuple(models or (tuple(m.strip() for m in env_models.split(",") if m.strip())
+                                       if env_models else self.DEFAULT_MODELS))
+        self.client = OpenAI(base_url=base_url or self.BASE_URL, api_key=key, timeout=90, max_retries=0)
+        self._cooldown_until: dict[str, float] = {}
+        self.last_model: str | None = None
+
+    # -- transport ---------------------------------------------------------------
+    @staticmethod
+    def _image_part(image: Image.Image) -> dict:
+        image = image.convert("RGB")
+        image.thumbnail((GeminiBackend.MAX_SIDE, GeminiBackend.MAX_SIDE))
+        buf = io.BytesIO()
+        image.save(buf, format="PNG")
+        data = base64.b64encode(buf.getvalue()).decode()
+        return {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{data}"}}
+
+    @staticmethod
+    def _is_quota_or_missing(exc: Exception) -> bool:
+        text = f"{type(exc).__name__}: {exc}".lower()
+        return any(s in text for s in ("429", "quota", "rate limit", "ratelimit", "resource_exhausted",
+                                       "404", "not found", "notfound"))
+
+    def _available(self) -> list[str]:
+        now = time.time()
+        return [m for m in self.models if self._cooldown_until.get(m, 0) <= now]
+
+    def _complete(self, image: Image.Image, prompt: str, *, json_mode: bool = False) -> str:
+        """One completion against the first model that is not on cooldown."""
+        failures = []
+        for model in self._available():
+            kwargs: dict[str, Any] = {}
+            if json_mode:
+                kwargs["response_format"] = {"type": "json_object"}
+            try:
+                response = self.client.chat.completions.create(
+                    model=model, temperature=0,
+                    messages=[{"role": "user", "content": [{"type": "text", "text": prompt},
+                                                           self._image_part(image)]}],
+                    **kwargs)
+            except Exception as exc:  # noqa: BLE001 - classify, then move on or re-raise
+                if self._is_quota_or_missing(exc):
+                    self._cooldown_until[model] = time.time() + self.COOLDOWN_S
+                    failures.append(f"{model}: {' '.join(str(exc).split())[:100]}")
+                    continue
+                raise
+            self.last_model = model
+            return response.choices[0].message.content or ""
+        raise RuntimeError("every Gemini model is rate-limited or unavailable: " + " | ".join(failures)
+                           if failures else "every Gemini model is on cooldown; try again later")
+
+    # -- answers ------------------------------------------------------------------
+    @staticmethod
+    def _boxes_from_json(text: str) -> list[tuple[str, float, float, float, float]]:
+        """Gemini's {"objects": [{"label", "box_2d": [ymin, xmin, ymax, xmax]}]} on a
+        0-1000 grid -> (label, x0, y0, x1, y1) on the 0-100 grid GeoChat uses."""
+        match = re.search(r"\{.*\}", text, re.DOTALL)
+        if not match:
+            return []
+        try:
+            data = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return []
+        items = data.get("objects", data) if isinstance(data, dict) else data
+        out = []
+        for item in items if isinstance(items, list) else []:
+            box = item.get("box_2d") if isinstance(item, dict) else None
+            if not (isinstance(box, list) and len(box) == 4):
+                continue
+            try:
+                ymin, xmin, ymax, xmax = (float(v) for v in box)
+            except (TypeError, ValueError):
+                continue
+            out.append((str(item.get("label", "")), xmin / 10, ymin / 10, xmax / 10, ymax / 10))
+        return out
+
+    def infer(self, image: Image.Image, prompt: str) -> str:
+        if prompt.startswith("[refer]"):
+            phrase = prompt.split("<p>")[1].split("</p>")[0].strip() if "<p>" in prompt else prompt
+            raw = self._complete(image, self.GROUND_PROMPT.format(phrase=phrase), json_mode=True)
+            return " ".join(f"<p>{label or phrase}</p> {{<{x0:.1f}><{y0:.1f}><{x1:.1f}><{y1:.1f}>|<0>}}"
+                            for label, x0, y0, x1, y1 in self._boxes_from_json(raw))
+        return self._complete(image, self.VQA_PREAMBLE + prompt)
+
+
+class ResultCache:
+    """One JSON file per (backend, tool, args). Warm it with the demo queries
+    the night before and the demo never waits on a model, per the plan doc.
+    Commit the folder if the whole team should share the warmed answers."""
+
+    def __init__(self, directory: Path):
+        self.dir = Path(directory)
+        self.dir.mkdir(parents=True, exist_ok=True)
+
+    def _path(self, backend: str, tool: str, args: dict) -> Path:
+        key = hashlib.sha256(json.dumps([backend, tool, args], sort_keys=True).encode()).hexdigest()[:24]
+        return self.dir / f"{tool}-{args.get('image_id', 'x')}-{key}.json"
+
+    def get(self, backend: str, tool: str, args: dict) -> dict | None:
+        path = self._path(backend, tool, args)
+        if not path.is_file():
+            return None
+        return json.loads(path.read_text(encoding="utf-8"))["result"]
+
+    def put(self, backend: str, tool: str, args: dict, result: dict, model: str | None) -> None:
+        payload = {"backend": backend, "model": model, "tool": tool, "args": args,
+                   "cached_at": time.strftime("%Y-%m-%dT%H:%M:%S"), "result": result}
+        self._path(backend, tool, args).write_text(json.dumps(payload, indent=1), encoding="utf-8")
+
+
 class GeoChatBackend:
     """GeoChat-7B through the repo's own LLaVA-style API. Mirrors
     geochat/eval/batch_geochat_grounding.py: llava_v1 template, 504 px
@@ -245,7 +427,8 @@ def ground(store: ImageStore, backend: Backend, args: dict) -> dict:
 TOOLS = {"vqa": (vqa, ("image_id", "question")), "ground": (ground, ("image_id", "phrase"))}
 
 
-def respond(store: ImageStore, backend: Backend, tool: str, args: Any) -> tuple[int, dict]:
+def respond(store: ImageStore, backend: Backend, tool: str, args: Any,
+            cache: ResultCache | None = None) -> tuple[int, dict]:
     """Pure function behind the HTTP handler so tests need no socket."""
     if tool not in TOOLS:
         return 404, {"status": "error", "error": f"unknown tool {tool!r}; this agent serves {sorted(TOOLS)}"}
@@ -257,10 +440,18 @@ def respond(store: ImageStore, backend: Backend, tool: str, args: Any) -> tuple[
         return 400, {"status": "error", "error": f"{tool}: missing {missing}"}
     if args["image_id"] not in store:
         return 404, {"status": "error", "error": f"{tool}: image {args['image_id']!r} is not loaded"}
+    call_args = {k: args[k] for k in required}
+    if cache is not None:
+        hit = cache.get(backend.name, tool, call_args)
+        if hit is not None:
+            return 200, {"status": "success", "result": hit, "cached": True}
     try:
-        return 200, {"status": "success", "result": fn(store, backend, args)}
+        result = fn(store, backend, call_args)
     except Exception as exc:  # noqa: BLE001 - the controller wants an envelope, not a traceback
         return 500, {"status": "error", "error": f"{tool}: {type(exc).__name__}: {exc}"}
+    if cache is not None:
+        cache.put(backend.name, tool, call_args, result, getattr(backend, "last_model", None))
+    return 200, {"status": "success", "result": result}
 
 
 # --- HTTP ---------------------------------------------------------------------
@@ -268,6 +459,7 @@ def respond(store: ImageStore, backend: Backend, tool: str, args: Any) -> tuple[
 class Handler(BaseHTTPRequestHandler):
     store: ImageStore
     backend: Backend
+    cache: ResultCache | None = None
 
     def _send(self, status: int, body: dict) -> None:
         payload = json.dumps(body).encode()
@@ -291,15 +483,15 @@ class Handler(BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             self._send(400, {"status": "error", "error": "body is not JSON"})
             return
-        status, body = respond(self.store, self.backend, self.path.strip("/"), args)
+        status, body = respond(self.store, self.backend, self.path.strip("/"), args, self.cache)
         self._send(status, body)
 
     def log_message(self, fmt, *args) -> None:
         print(f"{self.command} {self.path} -> {args[1] if len(args) > 1 else ''}", flush=True)
 
 
-def serve(store: ImageStore, backend: Backend, ports: list[int]) -> None:
-    Handler.store, Handler.backend = store, backend
+def serve(store: ImageStore, backend: Backend, ports: list[int], cache: ResultCache | None = None) -> None:
+    Handler.store, Handler.backend, Handler.cache = store, backend, cache
     servers = [ThreadingHTTPServer(("0.0.0.0", p), Handler) for p in ports]
     for srv in servers:
         threading.Thread(target=srv.serve_forever, daemon=True).start()
@@ -317,13 +509,17 @@ def serve(store: ImageStore, backend: Backend, ports: list[int]) -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="GeoChat VQA + grounding agent")
-    ap.add_argument("--backend", choices=["stub", "geochat"], default="stub")
+    ap.add_argument("--backend", choices=["stub", "gemini", "geochat"], default="stub")
+    ap.add_argument("--models", help="gemini: comma-separated models to rotate through "
+                                     f"(default {','.join(GeminiBackend.DEFAULT_MODELS)})")
     ap.add_argument("--model-path", help="GeoChat-7B directory (geochat backend)")
     ap.add_argument("--model-base", default=None)
     ap.add_argument("--load-4bit", action="store_true", help="fits one 16 GB T4")
     ap.add_argument("--load-8bit", action="store_true")
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--images", default=str(DEFAULT_IMAGES), help="folder holding manifest.json")
+    ap.add_argument("--cache-dir", default=str(DEFAULT_CACHE), help="answer cache for non-stub backends")
+    ap.add_argument("--no-cache", action="store_true", help="always call the model")
     ap.add_argument("--port", type=int, help="serve both tools on one port instead of 8001/8002")
     ns = ap.parse_args()
 
@@ -333,9 +529,13 @@ def main() -> int:
             ap.error("--model-path is required with --backend geochat")
         backend: Backend = GeoChatBackend(ns.model_path, ns.model_base, load_4bit=ns.load_4bit,
                                           load_8bit=ns.load_8bit, device=ns.device)
+    elif ns.backend == "gemini":
+        models = tuple(m.strip() for m in ns.models.split(",")) if ns.models else None
+        backend = GeminiBackend(models=models)
     else:
         backend = StubBackend()
-    serve(store, backend, [ns.port] if ns.port else sorted(set(PORTS.values())))
+    cache = None if ns.no_cache or backend.name == "stub" else ResultCache(Path(ns.cache_dir))
+    serve(store, backend, [ns.port] if ns.port else sorted(set(PORTS.values())), cache)
     return 0
 
 
