@@ -5,6 +5,9 @@ Runs under pytest, or standalone with `python tests.py`.
 
 from __future__ import annotations
 
+import json
+import os
+
 import geometry
 import plan as plan_mod
 import tools
@@ -1341,6 +1344,126 @@ def test_controller_reaches_the_mock_service_over_http():
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
+
+# --- planner provider chain ----------------------------------------------------
+# _call_llm is stubbed so these run offline. What is under test is the order
+# providers are tried, when the chain moves on, and what the caller learns.
+
+VALID_PLAN = json.dumps({
+    "steps": [{"id": "s1", "tool": "change_detect",
+               "args": {"image_id_t1": "img_2023_opt", "image_id_t2": "img_2026_opt"}}],
+    "answer_from": "s1", "reasoning": "stubbed",
+})
+INVALID_PLAN = json.dumps({
+    "steps": [{"id": "s1", "tool": "change_detect",
+               "args": {"image_id_t1": "img_2026_opt", "image_id_t2": "img_2023_opt"}}],  # backwards in time
+    "answer_from": "s1", "reasoning": "stubbed",
+})
+
+_CHAIN_VARS = ("SATQUERY_LLM_BASE_URL", "SATQUERY_LLM_MODEL", "SATQUERY_LLM_API_KEY",
+               "SATQUERY_LLM_FALLBACK_BASE_URL", "SATQUERY_LLM_FALLBACK_MODEL", "SATQUERY_LLM_FALLBACK_API_KEY")
+
+
+class _chain:
+    """Context manager: set chain env vars and stub _call_llm with a script of
+    per-provider behaviours (a string to return, or an exception to raise)."""
+
+    def __init__(self, env: dict, behaviour: dict):
+        self.env, self.behaviour, self.calls = env, behaviour, []
+
+    def __enter__(self):
+        self.saved = {k: os.environ.get(k) for k in _CHAIN_VARS}
+        for k in _CHAIN_VARS:
+            os.environ.pop(k, None)
+        os.environ.update(self.env)
+        self.orig = planner._call_llm
+
+        def fake(messages, provider):
+            self.calls.append(provider.name)
+            outcome = self.behaviour[provider.name]
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+
+        planner._call_llm = fake
+        return self
+
+    def __exit__(self, *_):
+        planner._call_llm = self.orig
+        for k, v in self.saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def test_chain_is_empty_with_nothing_configured():
+    with _chain({}, {}):
+        assert planner.providers() == []
+        plan = planner.plan_query("What changed?", demo_session())
+        assert plan.source == "fallback" and plan.provider == "keywords"
+        assert "every LLM provider failed" not in plan.reasoning  # nothing was tried, nothing to report
+
+
+def test_chain_order_is_primary_then_fallback_with_defaults():
+    with _chain({"SATQUERY_LLM_BASE_URL": "http://10.0.0.7:11434/v1", "SATQUERY_LLM_FALLBACK_API_KEY": "k"}, {}):
+        chain = planner.providers()
+        assert [p.name for p in chain] == ["primary", "fallback"]
+        assert chain[0].model == planner.DEFAULT_MODEL and chain[0].base_url == "http://10.0.0.7:11434/v1"
+        assert chain[0].api_key  # Ollama needs no key, but the client needs a non-empty one
+        assert chain[1].base_url == planner.DEFAULT_FALLBACK_BASE_URL and chain[1].api_key == "k"
+
+
+def test_fallback_alone_is_a_one_provider_chain():
+    with _chain({"SATQUERY_LLM_FALLBACK_API_KEY": "k"}, {}):
+        assert [p.name for p in planner.providers()] == ["fallback"]
+
+
+def test_primary_success_never_touches_the_fallback():
+    env = {"SATQUERY_LLM_MODEL": "gpt-oss:20b", "SATQUERY_LLM_FALLBACK_API_KEY": "k"}
+    with _chain(env, {"primary": VALID_PLAN, "fallback": VALID_PLAN}) as c:
+        plan = planner.plan_query("What changed?", demo_session())
+        assert plan.source == "llm" and plan.provider == "gpt-oss:20b"
+        assert c.calls == ["primary"]
+
+
+def test_dead_primary_hands_over_to_the_fallback():
+    env = {"SATQUERY_LLM_MODEL": "gpt-oss:20b", "SATQUERY_LLM_FALLBACK_API_KEY": "k"}
+    with _chain(env, {"primary": ConnectionError("connection refused"), "fallback": VALID_PLAN}) as c:
+        plan = planner.plan_query("What changed?", demo_session())
+        assert plan.source == "llm" and plan.provider == planner.DEFAULT_FALLBACK_MODEL
+        assert c.calls == ["primary", "primary", "fallback"]  # one retry, then move on
+
+
+def test_primary_that_keeps_planning_invalidly_hands_over_too():
+    env = {"SATQUERY_LLM_MODEL": "gpt-oss:20b", "SATQUERY_LLM_FALLBACK_API_KEY": "k"}
+    with _chain(env, {"primary": INVALID_PLAN, "fallback": VALID_PLAN}) as c:
+        plan = planner.plan_query("What changed?", demo_session())
+        assert plan.provider == planner.DEFAULT_FALLBACK_MODEL
+        assert c.calls == ["primary", "primary", "fallback"]
+
+
+def test_every_provider_failing_degrades_to_keywords_and_says_why():
+    env = {"SATQUERY_LLM_MODEL": "gpt-oss:20b", "SATQUERY_LLM_FALLBACK_API_KEY": "k"}
+    behaviour = {"primary": ConnectionError("connection refused"),
+                 "fallback": RuntimeError("Error code: 429 - quota exceeded")}
+    with _chain(env, behaviour) as c:
+        plan = planner.plan_query("What changed between the images?", demo_session())
+        assert plan.source == "fallback" and plan.provider == "keywords"
+        assert plan.steps[0].tool == "change_detect"  # the keyword route still ran
+        assert "every LLM provider failed" in plan.reasoning
+        assert "primary gpt-oss:20b" in plan.reasoning and "connection refused" in plan.reasoning
+        assert "fallback gemini" in plan.reasoning and "429" in plan.reasoning
+        assert c.calls == ["primary", "primary", "fallback", "fallback"]
+        # And the reason survives into the frontend-facing dict.
+        assert "429" in plan.to_dict()["reasoning"] and plan.to_dict()["provider"] == "keywords"
+
+
+def test_handle_query_reports_the_provider():
+    env = {"SATQUERY_LLM_MODEL": "gpt-oss:20b"}
+    with _chain(env, {"primary": VALID_PLAN}):
+        result = controller.handle_query("What changed?", demo_session())
+        assert result["plan"]["source"] == "llm" and result["plan"]["provider"] == "gpt-oss:20b"
 
 
 if __name__ == "__main__":
