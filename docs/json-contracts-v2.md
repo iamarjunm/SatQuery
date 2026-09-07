@@ -258,11 +258,15 @@ What the planner produces and the executor runs. Replaces v1's
   ],
   "answer_from": "s3",
   "reasoning": "New buildings are buildings in the later image that lie inside changed regions.",
-  "source": "llm"
+  "source": "llm",
+  "provider": "gpt-oss:20b"
 }
 ```
 
-`$<step_id>.<field>` is the only way data moves between steps. `source` is
+`$<step_id>.<field>` is the only way data moves between steps. `provider`
+names what planned it: the model name for an LLM plan, `"keywords"` for the
+fallback, whose `reasoning` then ends with `(every LLM provider failed: ...)`
+listing each provider and its error. `source` is
 `"llm"` or `"fallback"` (keyword routing, used when the LLM is unavailable or
 its plan failed validation twice).
 
@@ -288,10 +292,14 @@ The validator rejects, with a message the model can act on:
 
 ## 5. Planner behaviour
 
-Three layers, in order: LLM plan validated; LLM retry with the validation
-errors appended verbatim; keyword fallback. `temperature` is 0. With no
-`SATQUERY_LLM_API_KEY` set, the LLM is skipped and the fallback is used, so the
-whole system runs offline against the mocks.
+A chain, in order: primary LLM (Ollama on a teammate's machine by default)
+plan validated, with one retry carrying the validation errors verbatim; the
+same against the fallback LLM (Gemini by default) if the primary is down,
+rate-limited or plans invalidly twice; keyword fallback last, with every
+provider's error recorded in the plan's `reasoning`. `temperature` is 0. With
+no `SATQUERY_LLM_*` or `SATQUERY_LLM_FALLBACK_*` variable set, every LLM is
+skipped and the keyword fallback is used, so the whole system runs offline
+against the mocks.
 
 Sensor rule: optical is the default. If the relevant optical scene is flagged
 `cloudy` and a paired SAR scene of the same area is loaded, the planner uses
@@ -406,9 +414,12 @@ should say so.
 | `SATQUERY_MOCK` | `1` | all remote tools answer from mocks. Set `0` / `off` for real services |
 | `SATQUERY_MOCK_<TOOL>` | — | per-tool override, e.g. `SATQUERY_MOCK_GROUND=0` |
 | `SATQUERY_<TOOL>_URL` | `http://127.0.0.1:800N/<tool>` | vqa 8001, ground 8002, change_detect 8003, cross_modal 8004 |
-| `SATQUERY_LLM_API_KEY` | — | unset means keyword fallback only. A Google AI Studio key for the default endpoint |
-| `SATQUERY_LLM_BASE_URL` | `https://generativelanguage.googleapis.com/v1beta/openai/` (Gemini) | any OpenAI-compatible endpoint. Groq: `https://api.groq.com/openai/v1`; Ollama: `http://localhost:11434/v1` |
-| `SATQUERY_LLM_MODEL` | `gemini-3.6-flash` | must use the endpoint's own naming (Groq: `openai/gpt-oss-20b`, Ollama: `gpt-oss:20b`); check the provider's live model list |
+| `SATQUERY_LLM_BASE_URL` | `http://localhost:11434/v1` (Ollama) | primary planner endpoint, any OpenAI-compatible URL. Point at the teammate running Ollama. Groq: `https://api.groq.com/openai/v1` |
+| `SATQUERY_LLM_MODEL` | `gpt-oss:20b` | must use the endpoint's own naming (Groq: `openai/gpt-oss-20b`); check the provider's live model list |
+| `SATQUERY_LLM_API_KEY` | — | not needed for Ollama. Setting any of the three `SATQUERY_LLM_*` variables enables the primary; none set means it is skipped |
+| `SATQUERY_LLM_FALLBACK_BASE_URL` | `https://generativelanguage.googleapis.com/v1beta/openai/` (Gemini) | fallback planner endpoint, tried when the primary fails or plans invalidly twice |
+| `SATQUERY_LLM_FALLBACK_MODEL` | `gemini-3.6-flash` | Gemini free tier is ~20 requests/day per model, hence fallback only |
+| `SATQUERY_LLM_FALLBACK_API_KEY` | — | Google AI Studio key; setting it enables the fallback. With no provider enabled at all the planner is keyword-only |
 
 Swap one tool at a time to real services so integration problems arrive one at
 a time.

@@ -127,11 +127,29 @@ result = handle_query("Find buildings constructed after 2023", demo_session())
 print(result["answer"])
 ```
 
-With no `SATQUERY_LLM_API_KEY` set, `planner.py` skips the LLM and plans with
-its keyword fallback (`result["plan"]["source"] == "fallback"`), so the above
-runs fully offline against the mocks. Set `SATQUERY_LLM_API_KEY` (and
-optionally `SATQUERY_LLM_BASE_URL` / `SATQUERY_LLM_MODEL`, which default to
-Gemini's OpenAI-compatible endpoint and `gemini-3.6-flash`) to route through
-a real LLM instead. The key comes from Google AI Studio. Groq is
-`https://api.groq.com/openai/v1` with `openai/gpt-oss-20b`; Ollama is
-`http://localhost:11434/v1` with `gpt-oss:20b`.
+## Planner providers
+
+The planner tries a chain of OpenAI-compatible endpoints in order and only
+then falls back to keyword routing:
+
+| position | variables | default | enabled when |
+|---|---|---|---|
+| primary | `SATQUERY_LLM_BASE_URL`, `SATQUERY_LLM_MODEL`, `SATQUERY_LLM_API_KEY` | Ollama, `http://localhost:11434/v1`, `gpt-oss:20b`, no key | any of the three is set |
+| fallback | `SATQUERY_LLM_FALLBACK_BASE_URL`, `SATQUERY_LLM_FALLBACK_MODEL`, `SATQUERY_LLM_FALLBACK_API_KEY` | Gemini's OpenAI-compatible endpoint, `gemini-3.6-flash` | any of the three is set (the key, in practice) |
+
+The demo setup is Ollama on a teammate's machine as primary and Gemini as the
+safety net, which is this `.env`:
+
+```
+SATQUERY_LLM_BASE_URL=http://<teammate-ip>:11434/v1
+SATQUERY_LLM_FALLBACK_API_KEY=<Google AI Studio key>
+```
+
+Each provider gets one retry with the validator's error appended, then the
+chain moves on. If every provider fails, the keyword plan's `reasoning` ends
+with `(every LLM provider failed: ...)` naming each provider and its error,
+and `plan.provider` is `"keywords"`; an LLM plan carries the model name there.
+With nothing set, the planner is keyword-only and fully offline, which is how
+`tests.py` runs. Groq is `https://api.groq.com/openai/v1` with
+`openai/gpt-oss-20b` in either slot. Gemini's free tier is about 20 requests
+a day per model, which is why it is the fallback and not the primary.

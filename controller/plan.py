@@ -61,9 +61,12 @@ class Plan:
     answer_from: str
     reasoning: str = ""
     source: PlanSource = "llm"
+    # Which planner produced it: the model name for an LLM plan, "keywords"
+    # for the fallback. Diagnostic only; the frontend keys off `source`.
+    provider: str = ""
 
     @classmethod
-    def from_dict(cls, raw: Any, *, source: PlanSource = "llm") -> "Plan":
+    def from_dict(cls, raw: Any, *, source: PlanSource = "llm", provider: str = "") -> "Plan":
         if not isinstance(raw, dict):
             raise PlanFormatError(f"expected a JSON object, got {type(raw).__name__}")
 
@@ -97,6 +100,7 @@ class Plan:
             answer_from=answer_from,
             reasoning=str(raw.get("reasoning", "")),
             source=source,
+            provider=provider,
         )
 
     def step(self, step_id: str) -> Step | None:
@@ -105,6 +109,7 @@ class Plan:
     def to_dict(self) -> dict[str, Any]:
         return {
             "source": self.source,
+            "provider": self.provider,
             "reasoning": self.reasoning,
             "answer_from": self.answer_from,
             "steps": [s.to_dict() for s in self.steps],

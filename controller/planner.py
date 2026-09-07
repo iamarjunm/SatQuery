@@ -4,12 +4,16 @@ The planner is the only non-deterministic piece of the controller. It never
 touches pixels and never produces a coordinate or a count itself -- it only
 picks tools and wires their arguments together (see plan.py). Everything here
 exists to get from free text to a Plan that plan.validate() accepts, with a
-three-layer fallback so a flaky LLM degrades gracefully instead of crashing
-the demo:
+fallback chain so a flaky LLM degrades gracefully instead of crashing the
+demo:
 
-  1. LLM plan, validated.
-  2. LLM retry, with the validation error appended verbatim.
-  3. Deterministic keyword fallback (Plan.source == "fallback").
+  1. Primary LLM plan, validated; one retry with the validation error
+     appended verbatim.
+  2. The same against the fallback LLM (a hosted provider with its own
+     quota, Gemini by default) when the primary is down or rate-limited.
+  3. Deterministic keyword fallback (Plan.source == "fallback"), whose
+     reasoning records why every LLM was skipped, so a degraded answer is
+     never mistaken for a planned one.
 """
 
 from __future__ import annotations
@@ -17,18 +21,65 @@ from __future__ import annotations
 import json
 import os
 import re
+from dataclasses import dataclass
 
 from plan import Plan, PlanFormatError, validate
 from session import Session
 from tools import render_menu
 
 # Routing is a short-input, tiny-output task; any capable chat model will do.
-# Gemini's OpenAI-compatible endpoint is the default; Groq, OpenRouter and
-# Ollama are a base-URL change (see README). temperature 0 so the same query
-# always plans the same way.
-DEFAULT_MODEL = "gemini-3.6-flash"
-DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+# Every provider is OpenAI-compatible, so each is just a base URL, a key and a
+# model name. The primary defaults to Ollama (a teammate's machine, no key);
+# the fallback defaults to Gemini's hosted endpoint, which needs a key.
+# temperature 0 so the same query always plans the same way.
+DEFAULT_MODEL = "gpt-oss:20b"
+DEFAULT_BASE_URL = "http://localhost:11434/v1"
+DEFAULT_FALLBACK_MODEL = "gemini-3.6-flash"
+DEFAULT_FALLBACK_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 MAX_LLM_ATTEMPTS = 2
+LLM_TIMEOUT_S = 60  # same hard ceiling as a tool call; a hung provider must not hang the demo
+
+
+@dataclass(frozen=True)
+class Provider:
+    """One OpenAI-compatible endpoint in the chain. `name` is "primary" or
+    "fallback" and only appears in diagnostics."""
+    name: str
+    base_url: str
+    api_key: str
+    model: str
+
+    def describe(self) -> str:
+        return f"{self.name} {self.model} @ {self.base_url}"
+
+
+def _provider(name: str, prefix: str, default_url: str, default_model: str) -> Provider | None:
+    """Build one provider from <prefix>_BASE_URL / _MODEL / _API_KEY. Setting
+    any of the three enables it, so a keyless Ollama needs only a URL or a
+    model name, and a hosted endpoint needs only its key. Nothing set means
+    the provider is skipped, which keeps the test suite and any offline run
+    on the keyword fallback without a network timeout, the same way tools.py
+    defaults to mocks with nothing configured."""
+    url, model, key = (os.getenv(f"{prefix}_{k}") for k in ("BASE_URL", "MODEL", "API_KEY"))
+    if not (url or model or key):
+        return None
+    # Ollama ignores the key but the OpenAI client insists on a non-empty one.
+    return Provider(name, base_url=url or default_url, api_key=key or "ollama", model=model or default_model)
+
+
+def providers() -> list[Provider]:
+    """The chain, in the order it is tried, read from the environment each
+    call so a key or URL can be changed without restarting anything.
+
+    Primary:  SATQUERY_LLM_*            defaults to Ollama on localhost; point
+                                        BASE_URL at the teammate running it.
+    Fallback: SATQUERY_LLM_FALLBACK_*   defaults to Gemini; needs its API key.
+    """
+    chain = [
+        _provider("primary", "SATQUERY_LLM", DEFAULT_BASE_URL, DEFAULT_MODEL),
+        _provider("fallback", "SATQUERY_LLM_FALLBACK", DEFAULT_FALLBACK_BASE_URL, DEFAULT_FALLBACK_MODEL),
+    ]
+    return [p for p in chain if p is not None]
 
 ROLE = (
     "You are the planner for a satellite-imagery question answering system. "
@@ -152,51 +203,66 @@ def _prompt_messages(query: str, session: Session, retry_error: str | None) -> l
     return messages
 
 
-def _call_llm(messages: list[dict]) -> str:
-    """One completion call. Raises on any failure; callers decide what to do
-    with that (retry, then fall back to keywords). Imported lazily so a
-    machine with no LLM configured can still import this module and run the
-    keyword fallback."""
+def _call_llm(messages: list[dict], provider: Provider) -> str:
+    """One completion call against one provider. Raises on any failure;
+    callers decide what to do with that (retry, next provider, keywords).
+    Imported lazily so a machine with no LLM configured can still import this
+    module and run the keyword fallback."""
     from openai import OpenAI  # Gemini, Groq, OpenRouter and Ollama are all OpenAI-compatible.
 
-    client = OpenAI(
-        base_url=os.getenv("SATQUERY_LLM_BASE_URL", DEFAULT_BASE_URL),
-        api_key=os.getenv("SATQUERY_LLM_API_KEY", "unset"),
-    )
+    # max_retries=1: a quota error or a dead host should hand over to the
+    # next provider in seconds, not sit in the client's own backoff loop.
+    client = OpenAI(base_url=provider.base_url, api_key=provider.api_key,
+                    timeout=LLM_TIMEOUT_S, max_retries=1)
     response = client.chat.completions.create(
-        model=os.getenv("SATQUERY_LLM_MODEL", DEFAULT_MODEL),
+        model=provider.model,
         messages=messages,
         temperature=0,  # non-negotiable: the same query must plan identically every time.
     )
     return response.choices[0].message.content or ""
 
 
-def _llm_plan(query: str, session: Session) -> Plan | None:
-    """Try the LLM, with one retry against the validator's own error message.
-    Returns None (never raises) so plan_query can fall through to keywords."""
-    # No key configured: skip straight to the keyword fallback instead of
-    # spending the retry budget on a call that cannot succeed. Also lets the
-    # test suite and any offline run exercise the fallback without a network
-    # timeout, the same way tools.py defaults to mocks with nothing configured.
-    if not os.getenv("SATQUERY_LLM_API_KEY"):
-        return None
+def _short(exc: Exception) -> str:
+    """One line of an exception, enough to tell a 429 from a refused
+    connection from a malformed plan, without the provider's whole payload."""
+    text = " ".join(str(exc).split())
+    return f"{type(exc).__name__}: {text[:160]}"
 
+
+def _plan_with(provider: Provider, query: str, session: Session) -> tuple[Plan | None, str]:
+    """Try one provider, with one retry against the validator's own error
+    message. Returns (plan, "") on success or (None, reason) otherwise."""
     retry_error: str | None = None
     for _ in range(MAX_LLM_ATTEMPTS):
         try:
-            raw_text = _call_llm(_prompt_messages(query, session, retry_error))
+            raw_text = _call_llm(_prompt_messages(query, session, retry_error), provider)
             raw = _extract_json(raw_text)
-            plan = Plan.from_dict(raw, source="llm")
+            plan = Plan.from_dict(raw, source="llm", provider=provider.model)
         except (PlanFormatError, json.JSONDecodeError, Exception) as exc:
-            retry_error = str(exc)
+            retry_error = _short(exc)
             continue
 
         errors = validate(plan, session)
         if not errors:
-            return plan
+            return plan, ""
         retry_error = "; ".join(errors)
 
-    return None
+    return None, retry_error or "no attempt made"
+
+
+def _llm_plan(query: str, session: Session) -> tuple[Plan | None, list[str]]:
+    """Walk the provider chain. Returns the first valid plan, plus one line per
+    provider that failed, so the caller can say why it degraded. Never raises.
+    With nothing configured this returns immediately, which lets the test suite
+    and any offline run exercise the keyword fallback without a network timeout,
+    the same way tools.py defaults to mocks with nothing configured."""
+    failures: list[str] = []
+    for provider in providers():
+        plan, reason = _plan_with(provider, query, session)
+        if plan is not None:
+            return plan, failures
+        failures.append(f"{provider.describe()}: {reason}")
+    return None, failures
 
 
 # --- keyword fallback ---------------------------------------------------------
@@ -241,7 +307,7 @@ def _keyword_plan(query: str, session: Session) -> Plan:
                 "answer_from": "s1",
                 "reasoning": "keyword fallback: comparison query routed to change_detect",
             }
-        return Plan.from_dict(raw, source="fallback")
+        return Plan.from_dict(raw, source="fallback", provider="keywords")
 
     image_id = ids[0] if ids else None
     if image_id and any(w in q for w in _COUNT_WORDS):
@@ -254,7 +320,7 @@ def _keyword_plan(query: str, session: Session) -> Plan:
             "answer_from": "s2",
             "reasoning": "keyword fallback: tally query routed to ground-then-count",
         }
-        return Plan.from_dict(raw, source="fallback")
+        return Plan.from_dict(raw, source="fallback", provider="keywords")
 
     if image_id and any(w in q for w in _FIND_WORDS):
         raw = {
@@ -263,7 +329,7 @@ def _keyword_plan(query: str, session: Session) -> Plan:
             "answer_from": "s1",
             "reasoning": "keyword fallback: find/show/locate query routed to ground",
         }
-        return Plan.from_dict(raw, source="fallback")
+        return Plan.from_dict(raw, source="fallback", provider="keywords")
 
     # Nothing matched, or no images are loaded at all: ask the closest
     # sensible question rather than refusing to produce a plan.
@@ -273,7 +339,7 @@ def _keyword_plan(query: str, session: Session) -> Plan:
         "answer_from": "s1",
         "reasoning": "keyword fallback: no rule matched, asking the question directly",
     }
-    return Plan.from_dict(raw, source="fallback")
+    return Plan.from_dict(raw, source="fallback", provider="keywords")
 
 
 def _guess_phrase(query: str) -> str | None:
@@ -295,7 +361,19 @@ def plan_query(query: str, session: Session) -> Plan:
     if not isinstance(query, str) or not query.strip():
         raise ValueError("query must be a non-empty string")
 
-    plan = _llm_plan(query, session)
+    plan, failures = _llm_plan(query, session)
     if plan is not None:
         return plan
-    return _keyword_plan(query, session)
+    fallback = _keyword_plan(query, session)
+    if not failures:
+        return fallback
+    # Say why. "keyword fallback: ..." alone looks like a design choice; with
+    # the provider errors attached it reads as the degradation it is.
+    why = " | ".join(failures)
+    return Plan(
+        steps=fallback.steps,
+        answer_from=fallback.answer_from,
+        reasoning=f"{fallback.reasoning} (every LLM provider failed: {why})",
+        source="fallback",
+        provider="keywords",
+    )
