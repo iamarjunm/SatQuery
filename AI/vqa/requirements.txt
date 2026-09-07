@@ -1,0 +1,26 @@
+# Core inference/service stack
+torch>=2.14
+transformers>=5.3
+peft
+accelerate
+bitsandbytes
+einops
+einops-exts
+timm
+sentencepiece
+tokenizers
+scikit-learn
+shortuuid
+fastapi
+uvicorn
+pydantic
+
+# Data prep (only needed if you're re-running extraction/fine-tuning, not for serving)
+pandas
+pyarrow
+requests
+zstandard
+rasterio
+numpy
+Pillow
+pytest
