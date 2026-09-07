@@ -109,7 +109,7 @@ With no `SATQUERY_LLM_API_KEY` set, `planner.py` skips the LLM and plans with
 its keyword fallback (`result["plan"]["source"] == "fallback"`), so the above
 runs fully offline against the mocks. Set `SATQUERY_LLM_API_KEY` (and
 optionally `SATQUERY_LLM_BASE_URL` / `SATQUERY_LLM_MODEL`, which default to
-Gemini's OpenAI-compatible endpoint and `gemini-2.5-flash`) to route through
+Gemini's OpenAI-compatible endpoint and `gemini-3.6-flash`) to route through
 a real LLM instead. The key comes from Google AI Studio. Groq is
 `https://api.groq.com/openai/v1` with `openai/gpt-oss-20b`; Ollama is
 `http://localhost:11434/v1` with `gpt-oss:20b`.

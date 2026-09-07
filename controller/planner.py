@@ -26,7 +26,7 @@ from tools import render_menu
 # Gemini's OpenAI-compatible endpoint is the default; Groq, OpenRouter and
 # Ollama are a base-URL change (see README). temperature 0 so the same query
 # always plans the same way.
-DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_MODEL = "gemini-3.6-flash"
 DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 MAX_LLM_ATTEMPTS = 2
 
