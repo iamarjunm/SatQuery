@@ -10,10 +10,17 @@ out: {"answer": str, "confidence": float}
 ```
 
 Base model: [GeoChat-7B](https://github.com/mbzuai-oryx/GeoChat) (LLaVA-1.5
-architecture, remote-sensing adapted), loaded 4-bit (QLoRA-compatible) via
-bitsandbytes. A QLoRA fine-tune on BigEarthNet.txt is in progress; until that
-lands, this serves the base pretrained checkpoint, which already answers real
-questions about remote-sensing imagery (verified working end-to-end locally).
+architecture, remote-sensing adapted), loaded 4-bit via bitsandbytes and
+QLoRA-fine-tuned locally on a BigEarthNet.txt (arXiv:2603.29630) subset —
+this is what satisfies the hackathon's mandatory remote-sensing-adaptation
+requirement; `AI/geochat`'s `geochat` backend loads the same base checkpoint
+but performs no fine-tuning of its own.
+
+**Port note:** this service listens on **8011**, not 8001, because
+`AI/geochat/service.py` already claims 8001 for its own `/vqa` (three
+backends: stub, Gemini, pretrained-only GeoChat). Both can run side by side
+until the team decides which is canonical — set `SATQUERY_VQA_URL`
+accordingly for whichever one you're pointing the controller at.
 
 ## Setup
 
@@ -61,14 +68,15 @@ questions about remote-sensing imagery (verified working end-to-end locally).
    python AI/vqa/service.py
    ```
 
-   Then from the controller side, point `SATQUERY_VQA_URL` at
-   `http://127.0.0.1:8001/vqa` (its default already assumes this) and set
-   `SATQUERY_MOCK_VQA=0` to stop using the mock adapter.
+   Then from the controller side, set
+   `SATQUERY_VQA_URL=http://127.0.0.1:8011/vqa` (the contract's default of
+   8001 points at `AI/geochat` instead) and `SATQUERY_MOCK_VQA=0` to stop
+   using the mock adapter.
 
 ## Smoke test
 
 ```bash
-curl -s -X POST http://127.0.0.1:8001/vqa -H "Content-Type: application/json" \
+curl -s -X POST http://127.0.0.1:8011/vqa -H "Content-Type: application/json" \
   -d '{"image_id":"04133","question":"What type of land cover dominates this image?"}'
 # {"answer":"The type of land cover that dominates this image is baseball fields.","confidence":0.897...}
 ```
@@ -86,5 +94,5 @@ curl -s -X POST http://127.0.0.1:8001/vqa -H "Content-Type: application/json" \
 | file | what |
 |---|---|
 | `vqa_model.py` | `VQAModel` class: loads GeoChat, `answer(image_path, question) -> {"answer", "confidence"}` |
-| `service.py` | FastAPI wrapper exposing `POST /vqa` on port 8001 per the contract |
+| `service.py` | FastAPI wrapper exposing `POST /vqa` on port 8011 (see port note above) |
 | `geochat_transformers5_compat.patch` | apply to a fresh GeoChat clone before `pip install -e .` |
