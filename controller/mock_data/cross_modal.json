@@ -1,0 +1,140 @@
+{
+  "img_2026_opt+img_2026_sar": {
+    "regions": [
+      {
+        "id": "region_001",
+        "label": "built_up",
+        "geometry": {
+          "type": "Polygon",
+          "coordinates": [
+            [
+              [
+                16.37081,
+                48.21648
+              ],
+              [
+                16.37729,
+                48.21648
+              ],
+              [
+                16.37729,
+                48.22026
+              ],
+              [
+                16.37081,
+                48.22026
+              ],
+              [
+                16.37081,
+                48.21648
+              ]
+            ]
+          ]
+        },
+        "confidence": 0.91
+      },
+      {
+        "id": "region_002",
+        "label": "water",
+        "geometry": {
+          "type": "Polygon",
+          "coordinates": [
+            [
+              [
+                16.37891,
+                48.21108
+              ],
+              [
+                16.38539,
+                48.21108
+              ],
+              [
+                16.38539,
+                48.2154
+              ],
+              [
+                16.37891,
+                48.2154
+              ],
+              [
+                16.37891,
+                48.21108
+              ]
+            ]
+          ]
+        },
+        "confidence": 0.94
+      }
+    ],
+    "summary": "The scene contains built-up regions and water-covered regions."
+  },
+  "img_cloud_opt+img_cloud_sar": {
+    "regions": [
+      {
+        "id": "region_001",
+        "label": "built_up",
+        "geometry": {
+          "type": "Polygon",
+          "coordinates": [
+            [
+              [
+                16.42081,
+                48.25648
+              ],
+              [
+                16.42729,
+                48.25648
+              ],
+              [
+                16.42729,
+                48.26026
+              ],
+              [
+                16.42081,
+                48.26026
+              ],
+              [
+                16.42081,
+                48.25648
+              ]
+            ]
+          ]
+        },
+        "confidence": 0.91
+      },
+      {
+        "id": "region_002",
+        "label": "water",
+        "geometry": {
+          "type": "Polygon",
+          "coordinates": [
+            [
+              [
+                16.42891,
+                48.25108
+              ],
+              [
+                16.43539,
+                48.25108
+              ],
+              [
+                16.43539,
+                48.2554
+              ],
+              [
+                16.42891,
+                48.2554
+              ],
+              [
+                16.42891,
+                48.25108
+              ]
+            ]
+          ]
+        },
+        "confidence": 0.94
+      }
+    ],
+    "summary": "The scene contains built-up regions and water-covered regions."
+  }
+}
