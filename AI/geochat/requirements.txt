@@ -1,0 +1,7 @@
+# the agent itself (runs on a laptop with --backend stub)
+pillow>=10
+rasterio>=1.3
+
+# the real backend, on a GPU box: install the GeoChat repo on top of these
+#   git clone https://github.com/mbzuai-oryx/GeoChat && pip install -e GeoChat
+# torch, transformers and bitsandbytes come with it; see README.md
