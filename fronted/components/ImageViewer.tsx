@@ -2,10 +2,13 @@
 
 import React, { useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { ChevronDown, ChevronLeft, ChevronRight, Plus, Minus, Home, Maximize, Crosshair, Layers } from 'lucide-react';
-import { QueryType, ViewMode } from '../app/types';
+import { ChevronLeft, ChevronRight, CloudFog, ImageOff } from 'lucide-react';
+import { DisplayLayer, QueryResult, QueryType, SceneInfo, ViewMode } from '../app/types';
+import { formatDate } from '../lib/api';
 
 interface ImageViewerProps {
+  scenes: SceneInfo[];          // this site's chips, oldest first
+  result: QueryResult | null;
   queryType: QueryType;
   viewMode: ViewMode;
   setViewMode: (mode: ViewMode) => void;
@@ -15,18 +18,85 @@ interface ImageViewerProps {
   hasResult: boolean;
 }
 
-export default function ImageViewer({ 
-  queryType, 
-  viewMode, 
-  setViewMode, 
-  sliderPosition, 
-  setSliderPosition, 
-  isAnalyzing, 
-  hasResult 
+const STROKE: Record<string, string> = {
+  change_detect: '#FF5A65',
+  filter_by_region: '#FBBF24',
+  ground: '#818CF8',
+  cross_modal: '#34D399',
+};
+
+/** The step whose tool produced each display layer, for colouring. */
+function toolOfStep(result: QueryResult | null, stepId: string): string {
+  return result?.plan?.steps.find(s => s.id === stepId)?.tool || 'ground';
+}
+
+/** One chip with every result polygon that belongs to it, in its own pixel space. */
+function Chip({ scene, result, dim }: { scene: SceneInfo; result: QueryResult | null; dim?: boolean }) {
+  const [w, h] = scene.size_px;
+  const layers: [string, DisplayLayer][] = result
+    ? Object.entries(result.display || {}).filter(([, layer]) => layer.image_id === scene.image_id)
+    : [];
+  const answerStep = result?.plan?.answer_from;
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="xMidYMid meet" className="absolute inset-0 w-full h-full">
+      <image href={scene.preview} width={w} height={h} style={{ filter: dim ? 'brightness(0.55) saturate(0.6)' : undefined }} />
+      {layers.map(([stepId, layer]) => {
+        const tool = toolOfStep(result, stepId);
+        const stroke = STROKE[tool] || '#818CF8';
+        const isAnswer = stepId === answerStep;
+        return (
+          <g key={stepId} opacity={isAnswer ? 1 : 0.55}>
+            {layer.items.map((item, i) =>
+              item.pixels.map((ring, j) => (
+                <motion.polygon
+                  key={`${item.id || i}-${j}`}
+                  points={ring.map(p => p.join(',')).join(' ')}
+                  fill={stroke}
+                  fillOpacity={isAnswer ? 0.18 : 0.08}
+                  stroke={stroke}
+                  strokeWidth={Math.max(1.5, w / 400)}
+                  vectorEffect="non-scaling-stroke"
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  transition={{ delay: Math.min(i * 0.05, 1) }}
+                  style={{ transformOrigin: 'center', transformBox: 'fill-box' }}
+                >
+                  <title>{`${item.label}${item.confidence != null ? ` ${Math.round(item.confidence * 100)}%` : ''}`}</title>
+                </motion.polygon>
+              ))
+            )}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+function Tag({ scene, side }: { scene: SceneInfo; side: 'left' | 'right' }) {
+  return (
+    <div className={`absolute top-4 ${side === 'left' ? 'left-16' : 'right-4'} bg-[#0B0C10]/80 backdrop-blur-md px-3 py-1.5 rounded-md text-xs font-medium text-white border border-[#222432] z-10 shadow-lg flex items-center gap-2`}>
+      {formatDate(scene.acquired)}
+      <span className="text-slate-400">| {scene.source === 'sentinel-1' ? 'Sentinel-1 SAR' : 'Sentinel-2'}</span>
+      {scene.cloudy && <CloudFog size={12} className="text-slate-400" />}
+    </div>
+  );
+}
+
+export default function ImageViewer({
+  scenes,
+  result,
+  queryType,
+  viewMode,
+  setViewMode,
+  sliderPosition,
+  setSliderPosition,
+  isAnalyzing,
+  hasResult,
 }: ImageViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   const startSliding = (e: React.MouseEvent) => {
+    e.preventDefault();
     const handleMouseMove = (moveEvent: MouseEvent) => {
       if (!containerRef.current) return;
       const rect = containerRef.current.getBoundingClientRect();
@@ -42,133 +112,117 @@ export default function ImageViewer({
     window.addEventListener('mouseup', handleMouseUp);
   };
 
+  // Which chips to show. The scene the answer was computed on is "after";
+  // the earliest clear optical scene is "before" for a comparison.
+  const optical = scenes.filter(s => s.modality === 'optical');
+  const clear = optical.filter(s => !s.cloudy);
+  const answerLayer = result?.plan ? result.display?.[result.plan.answer_from] : undefined;
+  const answerImageId = answerLayer?.image_id
+    || (result?.plan?.steps.map(s => s.args.image_id || s.args.image_id_t2 || s.args.optical_image_id).find(Boolean) as string | undefined);
+  const after = scenes.find(s => s.image_id === answerImageId) || clear[clear.length - 1] || optical[optical.length - 1] || scenes[0];
+  const before = clear.find(s => s.image_id !== after?.image_id) || optical.find(s => s.image_id !== after?.image_id);
+  const compare = queryType === 'change_detection' && !!before && !!after;
+
   return (
     <div className="flex-1 bg-[#111217] rounded-xl border border-[#1E1F27] flex flex-col overflow-hidden relative shadow-lg">
-      
+
       {/* Viewer Header */}
       <div className="h-14 border-b border-[#1E1F27] flex items-center justify-between px-5 shrink-0 bg-[#111217] z-20">
         <h2 className="text-xs font-bold text-white tracking-widest">IMAGE VIEWER</h2>
-        
+
         <div className="flex items-center gap-6">
-          {queryType === 'change_detection' && (
-            <>
-              {/* Date Compare Selectors */}
-              <div className="flex items-center gap-2 text-sm">
-                <button suppressHydrationWarning className="flex items-center gap-2 bg-[#1A1C24] px-3 py-1.5 rounded border border-[#222432] text-slate-200 hover:bg-[#222432] transition-colors">
-                  15 Jun 2023 <ChevronDown size={14} className="text-slate-500"/>
+          {scenes.length > 0 && (
+            <div className="text-xs text-slate-500">
+              {scenes.length} scene{scenes.length !== 1 ? 's' : ''} loaded ·{' '}
+              {scenes.map(s => formatDate(s.acquired)).join(' · ')}
+            </div>
+          )}
+          {compare && (
+            <div className="flex items-center bg-[#0B0C10] p-1 rounded-lg border border-[#1E1F27]">
+              {(['before', 'after', 'split', 'slider'] as ViewMode[]).map(mode => (
+                <button
+                  key={mode}
+                  suppressHydrationWarning
+                  onClick={() => setViewMode(mode)}
+                  className={`px-3 py-1 text-xs font-medium rounded transition-colors capitalize ${viewMode === mode ? 'bg-[#2D2B55] text-indigo-200 border border-indigo-500/30 shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}
+                >
+                  {mode}
                 </button>
-                <span className="text-slate-500 text-xs font-medium">vs</span>
-                <button suppressHydrationWarning className="flex items-center gap-2 bg-[#1A1C24] px-3 py-1.5 rounded border border-[#222432] text-slate-200 hover:bg-[#222432] transition-colors">
-                  15 Jun 2026 <ChevronDown size={14} className="text-slate-500"/>
-                </button>
-              </div>
-              
-              {/* Segmented Control */}
-              <div className="flex items-center bg-[#0B0C10] p-1 rounded-lg border border-[#1E1F27]">
-                <button suppressHydrationWarning onClick={() => setViewMode('before')} className={`px-3 py-1 text-xs font-medium rounded transition-colors ${viewMode === 'before' ? 'bg-[#2D2B55] text-indigo-200 border border-indigo-500/30 shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}>Before</button>
-                <button suppressHydrationWarning onClick={() => setViewMode('after')} className={`px-3 py-1 text-xs font-medium rounded transition-colors ${viewMode === 'after' ? 'bg-[#2D2B55] text-indigo-200 border border-indigo-500/30 shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}>After</button>
-                <button suppressHydrationWarning onClick={() => setViewMode('split')} className={`px-3 py-1 text-xs font-medium rounded transition-colors ${viewMode === 'split' ? 'bg-[#2D2B55] text-indigo-200 border border-indigo-500/30 shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}>Split</button>
-                <button suppressHydrationWarning onClick={() => setViewMode('slider')} className={`px-3 py-1 text-xs font-medium rounded transition-colors ${viewMode === 'slider' ? 'bg-[#2D2B55] text-indigo-200 border border-indigo-500/30 shadow-sm' : 'text-slate-400 hover:text-slate-200'}`}>Slider</button>
-              </div>
-            </>
+              ))}
+            </div>
           )}
         </div>
       </div>
 
       {/* Viewer Canvas */}
       <div className="flex-1 relative bg-[#1A1C23] overflow-hidden" ref={containerRef}>
-        
-        {/* Floating Left Controls */}
-        <div className="absolute left-4 top-1/2 -translate-y-1/2 flex flex-col bg-[#0B0C10]/80 backdrop-blur-md rounded-lg border border-[#222432] overflow-hidden z-30 shadow-lg">
-          <button suppressHydrationWarning className="p-2.5 text-slate-400 hover:text-white hover:bg-[#1E1F27] transition-colors border-b border-[#222432]"><Plus size={18} /></button>
-          <button suppressHydrationWarning className="p-2.5 text-slate-400 hover:text-white hover:bg-[#1E1F27] transition-colors border-b border-[#222432]"><Minus size={18} /></button>
-          <button suppressHydrationWarning className="p-2.5 text-slate-400 hover:text-white hover:bg-[#1E1F27] transition-colors border-b border-[#222432]"><Home size={18} /></button>
-          <button suppressHydrationWarning className="p-2.5 text-slate-400 hover:text-white hover:bg-[#1E1F27] transition-colors border-b border-[#222432]"><Maximize size={18} /></button>
-          <button suppressHydrationWarning className="p-2.5 text-slate-400 hover:text-white hover:bg-[#1E1F27] transition-colors"><Crosshair size={18} /></button>
-        </div>
 
-        {/* Floating Right Control */}
-        <button suppressHydrationWarning className="absolute right-4 bottom-4 z-30 flex items-center gap-2 bg-[#0B0C10]/90 backdrop-blur-md px-4 py-2 rounded-lg border border-[#222432] text-sm text-slate-300 hover:text-white transition-colors shadow-lg">
-          <Layers size={16} /> Layers
-        </button>
-
-        {/* Base Layer */}
-        <div className={`absolute inset-0 bg-[#252830] bg-[url('https://images.unsplash.com/photo-1524661135-423995f22d0b?q=80&w=2000&auto=format&fit=crop')] bg-cover bg-center ${queryType === 'cross_modal' ? 'brightness-50 contrast-150 grayscale-[100%] hue-rotate-15' : 'brightness-75 contrast-125 grayscale-[30%]'} ${viewMode === 'before' && queryType === 'change_detection' ? 'hidden' : ''}`}>
-          <div className={`absolute top-4 ${queryType === 'change_detection' ? 'right-4' : queryType === 'cross_modal' ? 'right-4' : 'left-4'} bg-[#0B0C10]/80 backdrop-blur-md px-3 py-1.5 rounded-md text-xs font-medium text-white border border-[#222432] z-10 shadow-lg`}>
-            {queryType === 'change_detection' ? '15 Jun 2026' : queryType === 'cross_modal' ? 'Sentinel-1 SAR' : 'Current Scene'} <span className="text-slate-400 ml-1">| {queryType === 'cross_modal' ? 'C-Band' : 'Sentinel-2'}</span>
+        {!after && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center text-slate-500 gap-3">
+            <ImageOff size={28} />
+            <span className="text-sm">No scenes loaded. Is the controller running?</span>
           </div>
+        )}
 
-          {/* Scanning Animation */}
-          <AnimatePresence>
-            {isAnalyzing && (
-              <motion.div 
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-                className="absolute inset-0 pointer-events-none z-10"
-              >
-                <motion.div 
-                  initial={{ top: '0%' }}
-                  animate={{ top: '100%' }}
-                  transition={{ duration: 1.5, repeat: Infinity, ease: 'linear' }}
-                  className="absolute left-0 right-0 h-1 bg-cyan-400/50 shadow-[0_0_20px_rgba(34,211,238,1)]"
-                />
-                <div className="absolute inset-0 bg-cyan-900/10 mix-blend-overlay" />
-              </motion.div>
-            )}
-          </AnimatePresence>
+        {/* Base layer: the "after" chip with its polygons */}
+        {after && (
+          <div className={`absolute inset-0 ${compare && viewMode === 'before' ? 'hidden' : ''}`}>
+            <Chip scene={after} result={result} />
+            <Tag scene={after} side="right" />
 
-          {/* Detected Bounding Boxes */}
-          <AnimatePresence>
-            {hasResult && (queryType === 'grounding' || queryType === 'change_detection') && (
-              <motion.div 
-                initial="hidden"
-                animate="visible"
-                variants={{
-                  visible: { transition: { staggerChildren: 0.1 } }
-                }}
-                className="absolute inset-0 z-10 pointer-events-none"
-              >
-                <motion.div variants={{ hidden: { opacity: 0, scale: 0.8 }, visible: { opacity: 1, scale: 1, transition: { type: 'spring' } } }} className={`absolute top-[22%] right-[25%] w-[12%] h-[15%] border-2 ${queryType === 'change_detection' ? 'border-[#FF5A65] bg-[#FF5A65]/10 shadow-[0_0_15px_rgba(255,90,101,0.5)]' : 'border-[#4F46E5] bg-[#4F46E5]/10 shadow-[0_0_15px_rgba(79,70,229,0.5)]'} rounded-sm flex items-center justify-center`}>
-                   <div className={`absolute -top-6 ${queryType === 'change_detection' ? 'bg-[#1A151C] border-[#3A2228] text-[#FF5A65]' : 'bg-[#151522] border-[#2A2B44] text-[#818CF8]'} border px-2 py-0.5 rounded text-[10px] font-bold whitespace-nowrap shadow-md backdrop-blur-sm`}>
-                     {queryType === 'change_detection' ? 'New Building 92%' : 'Building 92%'}
-                   </div>
+            {/* Scanning Animation */}
+            <AnimatePresence>
+              {isAnalyzing && (
+                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 pointer-events-none z-10">
+                  <motion.div
+                    initial={{ top: '0%' }}
+                    animate={{ top: '100%' }}
+                    transition={{ duration: 1.5, repeat: Infinity, ease: 'linear' }}
+                    className="absolute left-0 right-0 h-1 bg-cyan-400/50 shadow-[0_0_20px_rgba(34,211,238,1)]"
+                  />
+                  <div className="absolute inset-0 bg-cyan-900/10 mix-blend-overlay" />
                 </motion.div>
-                <motion.div variants={{ hidden: { opacity: 0, scale: 0.8 }, visible: { opacity: 1, scale: 1 } }} className={`absolute top-[45%] right-[38%] w-[10%] h-[12%] border-2 ${queryType === 'change_detection' ? 'border-[#FF5A65] bg-[#FF5A65]/10 shadow-[0_0_15px_rgba(255,90,101,0.5)]' : 'border-[#4F46E5] bg-[#4F46E5]/10 shadow-[0_0_15px_rgba(79,70,229,0.5)]'} rounded-sm`} />
-                <motion.div variants={{ hidden: { opacity: 0, scale: 0.8 }, visible: { opacity: 1, scale: 1 } }} className={`absolute top-[48%] right-[22%] w-[9%] h-[11%] border-2 ${queryType === 'change_detection' ? 'border-[#FF5A65] bg-[#FF5A65]/10 shadow-[0_0_15px_rgba(255,90,101,0.5)]' : 'border-[#4F46E5] bg-[#4F46E5]/10 shadow-[0_0_15px_rgba(79,70,229,0.5)]'} rounded-sm`} />
-                <motion.div variants={{ hidden: { opacity: 0, scale: 0.8 }, visible: { opacity: 1, scale: 1 } }} className={`absolute bottom-[28%] right-[28%] w-[8%] h-[9%] border-2 ${queryType === 'change_detection' ? 'border-[#FF5A65] bg-[#FF5A65]/10 shadow-[0_0_15px_rgba(255,90,101,0.5)]' : 'border-[#4F46E5] bg-[#4F46E5]/10 shadow-[0_0_15px_rgba(79,70,229,0.5)]'} rounded-sm`} />
-                <motion.div variants={{ hidden: { opacity: 0, scale: 0.8 }, visible: { opacity: 1, scale: 1 } }} className={`absolute bottom-[40%] right-[45%] w-[5%] h-[6%] border-2 ${queryType === 'change_detection' ? 'border-[#FF5A65] bg-[#FF5A65]/10 shadow-[0_0_15px_rgba(255,90,101,0.5)]' : 'border-[#4F46E5] bg-[#4F46E5]/10 shadow-[0_0_15px_rgba(79,70,229,0.5)]'} rounded-sm`} />
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
+              )}
+            </AnimatePresence>
+          </div>
+        )}
 
-        {/* 2023 Image overlay */}
-        {(queryType === 'change_detection' || queryType === 'cross_modal') && (
-          <div 
-            className={`absolute inset-0 bg-[#1A1C23] bg-[url('https://images.unsplash.com/photo-1524661135-423995f22d0b?q=80&w=2000&auto=format&fit=crop')] bg-cover bg-center ${queryType === 'cross_modal' ? 'brightness-75 contrast-125 grayscale-[10%]' : 'brightness-50 contrast-100 grayscale-[40%] hue-rotate-15 sepia-[20%]'} z-20 ${viewMode === 'after' && queryType === 'change_detection' ? 'hidden' : ''}`}
-            style={{ 
-              clipPath: queryType === 'cross_modal' ? 'inset(0 50% 0 0)' : (viewMode === 'slider' ? `inset(0 ${100 - sliderPosition}% 0 0)` : viewMode === 'split' ? 'inset(0 50% 0 0)' : 'inset(0 0 0 0)')
+        {/* "Before" chip on top, clipped for split / slider */}
+        {compare && before && (
+          <div
+            className={`absolute inset-0 z-20 ${viewMode === 'after' ? 'hidden' : ''}`}
+            style={{
+              clipPath: viewMode === 'slider' ? `inset(0 ${100 - sliderPosition}% 0 0)` : viewMode === 'split' ? 'inset(0 50% 0 0)' : 'inset(0 0 0 0)',
             }}
           >
-            <div className={`absolute inset-y-0 right-0 w-px bg-white/20 shadow-[2px_0_15px_rgba(0,0,0,0.8)] ${(queryType === 'cross_modal' || viewMode === 'slider' || viewMode === 'split') ? '' : 'hidden'}`} />
-            <div className="absolute top-4 left-4 bg-[#0B0C10]/80 backdrop-blur-md px-3 py-1.5 rounded-md text-xs font-medium text-white border border-[#222432] shadow-lg">
-              {queryType === 'cross_modal' ? 'Sentinel-2 OPTICAL' : '15 Jun 2023'} <span className="text-slate-400 ml-1">| {queryType === 'cross_modal' ? 'Multispectral' : 'Sentinel-2'}</span>
-            </div>
+            <Chip scene={before} result={result} dim={viewMode !== 'before'} />
+            <div className={`absolute inset-y-0 right-0 w-px bg-white/20 shadow-[2px_0_15px_rgba(0,0,0,0.8)] ${viewMode === 'slider' || viewMode === 'split' ? '' : 'hidden'}`} />
+            <Tag scene={before} side="left" />
           </div>
         )}
 
         {/* Slider Handle */}
-        {queryType === 'change_detection' && viewMode === 'slider' && (
-          <div 
-            className="absolute top-0 bottom-0 w-px bg-white/50 cursor-ew-resize z-30 group"
-            style={{ left: `${sliderPosition}%` }}
-            onMouseDown={startSliding}
-          >
+        {compare && viewMode === 'slider' && (
+          <div className="absolute top-0 bottom-0 w-px bg-white/50 cursor-ew-resize z-30 group" style={{ left: `${sliderPosition}%` }} onMouseDown={startSliding}>
             <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-9 h-9 bg-[#111217] rounded-full border border-[#2A2B35] flex items-center justify-center text-slate-300 shadow-[0_0_20px_rgba(0,0,0,0.5)] group-hover:scale-110 group-hover:border-indigo-500/50 transition-all">
               <ChevronLeft size={14} className="-mr-0.5" />
               <ChevronRight size={14} className="-ml-0.5" />
             </div>
+          </div>
+        )}
+
+        {/* Legend */}
+        {hasResult && result?.display && Object.keys(result.display).length > 0 && (
+          <div className="absolute left-4 bottom-4 z-30 bg-[#0B0C10]/85 backdrop-blur-md rounded-lg border border-[#222432] px-3 py-2 text-[11px] text-slate-300 flex flex-col gap-1 shadow-lg">
+            {Object.entries(result.display).map(([stepId, layer]) => {
+              const tool = toolOfStep(result, stepId);
+              return (
+                <div key={stepId} className="flex items-center gap-2">
+                  <span className="inline-block w-3 h-3 rounded-sm border-2" style={{ borderColor: STROKE[tool] || '#818CF8', background: `${STROKE[tool] || '#818CF8'}30` }} />
+                  <span className="text-slate-400">{stepId}</span> {tool.replace('_', ' ')} · {layer.items.length}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

@@ -1,128 +1,66 @@
 const express = require('express');
 const router = express.Router();
-const modelService = require('../services/modelService');
 
 // POST /query
-// Main endpoint for the frontend to submit queries
-router.post('/', async (req, res) => {
-  try {
-    const { query_id, query, image_id, image_before, image_after } = req.body;
+// The frontend's single entry point. The backend does no routing of its own:
+// it forwards the query to the agent controller (controller/server.py), which
+// plans it with an LLM, runs the plan against the model services, validates
+// every geometry, and returns the answer plus a pixel-space "display" layer
+// for the viewer. See docs/json-contracts-v2.md for the result shape.
+const CONTROLLER_URL = process.env.CONTROLLER_URL || 'http://127.0.0.1:8080';
 
-    if (!query_id || !query) {
-      return res.status(400).json({
+router.post('/', async (req, res) => {
+  const { query_id, query, image_ids } = req.body || {};
+
+  if (!query || typeof query !== 'string' || !query.trim()) {
+    return res.status(400).json({
+      query_id: query_id || 'unknown',
+      status: 'error',
+      error: { code: 'INVALID_QUERY', message: 'query is required.' }
+    });
+  }
+
+  try {
+    const upstream = await fetch(`${CONTROLLER_URL}/query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, image_ids })
+    });
+    const payload = await upstream.json();
+    if (!upstream.ok) {
+      return res.status(upstream.status).json({
         query_id: query_id || 'unknown',
         status: 'error',
-        error: {
-          code: 'INVALID_QUERY',
-          message: 'query_id and query are required fields.'
-        }
+        error: { code: 'CONTROLLER_ERROR', message: payload.error || `controller returned ${upstream.status}` }
       });
     }
-
-    // --- 1. Query Router Logic ---
-    // In a real app, an LLM would parse the query to determine the intent and workflow.
-    // For this prototype, we'll use simple keyword matching to route the request.
-    
-    let intent = '';
-    let workflow = [];
-    const qLower = query.toLowerCase();
-
-    if (qLower.includes('change') || qLower.includes('newly')) {
-      if (qLower.includes('building')) {
-         intent = 'multi_step';
-         workflow = [
-           { step: 1, task: 'change_detection' },
-           { step: 2, task: 'grounding', input_from: 'step_1' }
-         ];
-      } else {
-        intent = 'change_detection';
-        workflow = [{ step: 1, task: 'change_detection' }];
-      }
-    } else if (qLower.includes('find') || qLower.includes('locate') || qLower.includes('where')) {
-      intent = 'grounding';
-      workflow = [{ step: 1, task: 'grounding' }];
-    } else {
-      intent = 'vqa';
-      workflow = [{ step: 1, task: 'vqa' }];
-    }
-
-    console.log(`Router Intent: ${intent} for query: "${query}"`);
-
-    // --- 2. Execute Workflow ---
-    // We mock the AI models calling based on the determined intent.
-    let finalResult = null;
-    let visualization = null;
-
-    if (intent === 'vqa') {
-      const vqaResult = await modelService.runVQA(image_id, query);
-      finalResult = { summary: vqaResult.result.answer };
-      visualization = null; // No viz for simple text answer
-    } 
-    else if (intent === 'grounding') {
-      const groundingResult = await modelService.runGrounding(image_id, 'buildings'); // Simple extraction
-      finalResult = { summary: `${groundingResult.result.count} objects were detected.` };
-      visualization = {
-        type: 'bounding_boxes',
-        items: groundingResult.result.objects
-      };
-    }
-    else if (intent === 'change_detection') {
-      const changeResult = await modelService.runChangeDetection(image_before, image_after);
-      finalResult = { summary: `${changeResult.result.change_count} changes were detected.` };
-      visualization = {
-        type: 'bounding_boxes',
-        items: changeResult.result.changes
-      };
-    }
-    else if (intent === 'multi_step') {
-      // Execute change detection, then grounding
-      const changeResult = await modelService.runChangeDetection(image_before, image_after);
-      // In a real scenario, grounding would run ON the changed regions. 
-      // For the mock, we'll just return a combined/specific response.
-      finalResult = { summary: `3 newly constructed buildings were detected.` };
-      visualization = {
-        type: 'bounding_boxes',
-        items: [
-          {
-            label: 'new_building',
-            bbox: [120, 80, 260, 200],
-            confidence: 0.92
-          }
-        ]
-      };
-    }
-
-    // --- 3. Unified Result JSON ---
-    const response = {
-      query_id,
-      status: 'success',
-      task: intent,
-      result: finalResult
-    };
-
-    if (visualization) {
-      response.visualization = visualization;
-    }
-
-    // Optional: Add mock statistics
-    response.statistics = {
-      objects_detected: visualization?.items?.length || 0,
-      changes_detected: intent.includes('change') ? (visualization?.items?.length || 0) : 0,
-      processing_time_ms: Math.floor(Math.random() * 2000) + 500
-    };
-
-    return res.json(response);
-
+    // The controller's own status is "ok" or "partial"; both carry a valid answer.
+    return res.json({ query_id: query_id || null, ...payload });
   } catch (error) {
-    console.error('Error processing query:', error);
-    res.status(500).json({
-      query_id: req.body.query_id || 'unknown',
+    console.error('controller unreachable:', error.message);
+    return res.status(502).json({
+      query_id: query_id || 'unknown',
       status: 'error',
       error: {
-        code: 'MODEL_FAILED',
-        message: 'The selected model could not process the image.'
+        code: 'CONTROLLER_UNREACHABLE',
+        message: `Could not reach the controller at ${CONTROLLER_URL}. Start it with: cd controller && python server.py`
       }
     });
+  }
+});
+
+// GET /query/images
+// The scenes the controller has loaded, for the frontend's site picker.
+router.get('/images', async (req, res) => {
+  try {
+    const upstream = await fetch(`${CONTROLLER_URL}/images`);
+    const payload = await upstream.json();
+    // Preview paths are relative to the controller; make them absolute so
+    // the browser can load them directly.
+    payload.images = (payload.images || []).map(img => ({ ...img, preview: `${CONTROLLER_URL}${img.preview}` }));
+    return res.json(payload);
+  } catch (error) {
+    return res.status(502).json({ status: 'error', error: { code: 'CONTROLLER_UNREACHABLE', message: error.message } });
   }
 });
 
