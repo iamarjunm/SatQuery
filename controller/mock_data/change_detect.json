@@ -1,0 +1,72 @@
+{
+  "img_2023_opt>img_2026_opt": {
+    "regions": [
+      {
+        "id": "change_001",
+        "type": "construction",
+        "geometry": {
+          "type": "Polygon",
+          "coordinates": [
+            [
+              [
+                16.37405,
+                48.21702
+              ],
+              [
+                16.37729,
+                48.21702
+              ],
+              [
+                16.37729,
+                48.218856
+              ],
+              [
+                16.37405,
+                48.218856
+              ],
+              [
+                16.37405,
+                48.21702
+              ]
+            ]
+          ]
+        },
+        "confidence": 0.92
+      },
+      {
+        "id": "change_002",
+        "type": "vegetation_loss",
+        "geometry": {
+          "type": "Polygon",
+          "coordinates": [
+            [
+              [
+                16.37891,
+                48.2127
+              ],
+              [
+                16.38215,
+                48.2127
+              ],
+              [
+                16.38215,
+                48.21486
+              ],
+              [
+                16.37891,
+                48.21486
+              ],
+              [
+                16.37891,
+                48.2127
+              ]
+            ]
+          ]
+        },
+        "confidence": 0.87
+      }
+    ],
+    "changed_area_km2": 0.107,
+    "change_mask_id": "mask_img_2023_opt_img_2026_opt"
+  }
+}

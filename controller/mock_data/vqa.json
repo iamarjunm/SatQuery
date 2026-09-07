@@ -1,0 +1,22 @@
+{
+  "img_2023_opt": {
+    "answer": "The image shows Arable land, Mixed forest.",
+    "confidence": 0.89
+  },
+  "img_2026_opt": {
+    "answer": "The image shows Arable land, Urban fabric.",
+    "confidence": 0.89
+  },
+  "img_2026_sar": {
+    "answer": "The image shows built-up areas and vegetation.",
+    "confidence": 0.89
+  },
+  "img_cloud_opt": {
+    "answer": "The image shows built-up areas and vegetation.",
+    "confidence": 0.89
+  },
+  "img_cloud_sar": {
+    "answer": "The image shows built-up areas and vegetation.",
+    "confidence": 0.89
+  }
+}

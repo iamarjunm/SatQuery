@@ -24,6 +24,26 @@ SATQUERY_GROUND_URL=https://<tunnel>/ground
 
 One tool at a time, so integration problems land one at a time.
 
+## Mock service
+
+`mock_service.py` is the HTTP stand-in for the model services. It serves the
+fixtures in `mock_data/` on the tools' default ports (8001-8004) in the team
+envelope, so the controller exercises its real HTTP adapter, envelope handling
+and response validation instead of the in-process mocks:
+
+```
+.venv/Scripts/python mock_service.py           # terminal 1
+SATQUERY_MOCK=0 .venv/Scripts/python e2e.py    # terminal 2
+```
+
+The fixtures are the reference responses for P2/P3/P4: one file per tool,
+keyed by the demo image id(s), every geometry a GeoJSON Polygon in EPSG:4326
+that lies inside the source footprint. `tests.py` checks every fixture against
+the same validators a real response goes through, so a service whose output
+matches a fixture field-for-field will pass integration. An unknown image id
+gets a 404 with `{"status": "error", "error": ...}`, which is what a real
+service should return for an image it has not loaded.
+
 ## Service contract
 
 This is what the controller sends and what it checks on the way back. It is
@@ -93,6 +113,8 @@ time, and an optical/SAR pair the wrong way round.
 | `planner.py` | LLM query -> validated `Plan`, with retry and keyword fallback |
 | `executor.py` | runs a `Plan`: `$ref` resolution, short-circuiting, partial results, confidence |
 | `controller.py` | `handle_query()`, the single public entry point |
+| `mock_service.py` | HTTP stand-in for the model services, serves `mock_data/` fixtures |
+| `e2e.py` | end-to-end runner: real planner, mock or real tools |
 | `tests.py` | run with `python tests.py` or pytest |
 
 ## Running a query end to end

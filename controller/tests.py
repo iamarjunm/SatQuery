@@ -1242,6 +1242,107 @@ def test_handle_query_never_raises_on_a_bad_query():
     assert result["plan"] is None
 
 
+# --- mock_service: the HTTP stand-in for the model services -------------------
+# The fixtures in mock_data/ are the reference responses P2/P3/P4 are asked to
+# match, so they must pass the same checks a real service response does, and
+# the controller must be able to reach them over a real socket.
+
+import mock_service
+
+
+def _fixture_args(tool, key):
+    if tool == "change_detect":
+        t1, t2 = key.split(">")
+        return {"image_id_t1": t1, "image_id_t2": t2}
+    if tool == "cross_modal":
+        opt, sar = key.split("+")
+        return {"optical_image_id": opt, "sar_image_id": sar, "phrase": "water"}
+    if tool == "ground":
+        return {"image_id": key, "phrase": "buildings"}
+    return {"image_id": key, "question": "What is here?"}
+
+
+def test_every_fixture_conforms_to_the_contract():
+    session = demo_session()
+    fixtures = mock_service.load_fixtures()
+    assert set(fixtures) == {"vqa", "ground", "change_detect", "cross_modal"}
+    for tool, by_key in fixtures.items():
+        assert by_key, f"{tool}: no fixtures"
+        spec = tools.TOOLS[tool]
+        for key, result in by_key.items():
+            args = _fixture_args(tool, key)
+            tools._check_shape(spec, result)
+            tools._check_items(spec, result, tools._source_footprints(spec, args, session))
+
+
+def test_fixtures_cover_every_demo_image_and_pair():
+    fixtures = mock_service.load_fixtures()
+    session = demo_session()
+    for image_id in session.ids():
+        assert image_id in fixtures["vqa"], image_id
+        assert image_id in fixtures["ground"], image_id
+    assert "img_2023_opt>img_2026_opt" in fixtures["change_detect"]
+    assert {"img_2026_opt+img_2026_sar", "img_cloud_opt+img_cloud_sar"} <= set(fixtures["cross_modal"])
+
+
+def test_respond_wraps_in_the_success_envelope_and_labels_with_the_phrase():
+    fixtures = mock_service.load_fixtures()
+    status, body = mock_service.respond(fixtures, "ground", {"image_id": "img_2026_opt", "phrase": "ships"})
+    assert status == 200 and body["status"] == "success"
+    assert {o["label"] for o in body["result"]["objects"]} == {"ships"}
+    # The cached fixture must not have been relabelled in place.
+    assert fixtures["ground"]["img_2026_opt"]["objects"][0]["label"] == "object"
+
+
+def test_respond_reports_unknown_inputs_as_error_envelopes():
+    fixtures = mock_service.load_fixtures()
+    assert mock_service.respond(fixtures, "vqa", {"image_id": "img_nope", "question": "?"})[0] == 404
+    assert mock_service.respond(fixtures, "ground", {"phrase": "x"})[0] == 400
+    assert mock_service.respond(fixtures, "not_a_tool", {})[0] == 404
+    status, body = mock_service.respond(fixtures, "change_detect",
+                                        {"image_id_t1": "img_2026_opt", "image_id_t2": "img_2023_opt"})
+    assert status == 404 and body["status"] == "error"
+
+
+def test_controller_reaches_the_mock_service_over_http():
+    import os
+    import threading
+    from http.server import ThreadingHTTPServer
+
+    mock_service.Handler.fixtures = mock_service.load_fixtures()
+    server = ThreadingHTTPServer(("127.0.0.1", 0), mock_service.Handler)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    saved = {k: os.environ.get(k) for k in ("SATQUERY_MOCK_GROUND", "SATQUERY_GROUND_URL", "SATQUERY_MOCK_VQA", "SATQUERY_VQA_URL")}
+    try:
+        os.environ["SATQUERY_MOCK_GROUND"] = "0"
+        os.environ["SATQUERY_GROUND_URL"] = f"http://127.0.0.1:{port}/ground"
+        os.environ["SATQUERY_MOCK_VQA"] = "0"
+        os.environ["SATQUERY_VQA_URL"] = f"http://127.0.0.1:{port}/vqa"
+        session = demo_session()
+        result = tools.call("ground", {"image_id": "img_2026_opt", "phrase": "buildings"}, session)
+        assert "mock" not in result, "answer came from the in-process mock, not the HTTP service"
+        assert len(result["objects"]) == 5 and result["objects"][0]["label"] == "buildings"
+        # An unknown image is a ToolError with the service's reason in it, not a crash.
+        try:
+            tools.call("vqa", {"image_id": "img_2026_opt", "question": "?"}, session)
+        except tools.ToolError:
+            raise AssertionError("known image should succeed")
+        try:
+            tools.call("vqa", {"image_id": "img_nope", "question": "?"}, session)
+        except Exception as exc:
+            assert "img_nope" in str(exc)
+        else:
+            raise AssertionError("unknown image should fail loudly")
+    finally:
+        server.shutdown()
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
 if __name__ == "__main__":
     import warnings
 
