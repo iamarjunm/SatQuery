@@ -22,10 +22,12 @@ from plan import Plan, PlanFormatError, validate
 from session import Session
 from tools import render_menu
 
-# Routing is a short-input, tiny-output task, so a small open-weights model is
-# enough; temperature 0 so the same query always plans the same way.
-DEFAULT_MODEL = "openai/gpt-oss-20b"
-DEFAULT_BASE_URL = "https://api.groq.com/openai/v1"
+# Routing is a short-input, tiny-output task; any capable chat model will do.
+# Gemini's OpenAI-compatible endpoint is the default; Groq, OpenRouter and
+# Ollama are a base-URL change (see README). temperature 0 so the same query
+# always plans the same way.
+DEFAULT_MODEL = "gemini-2.5-flash"
+DEFAULT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 MAX_LLM_ATTEMPTS = 2
 
 ROLE = (
@@ -155,7 +157,7 @@ def _call_llm(messages: list[dict]) -> str:
     with that (retry, then fall back to keywords). Imported lazily so a
     machine with no LLM configured can still import this module and run the
     keyword fallback."""
-    from openai import OpenAI  # Groq, OpenRouter and Ollama are all OpenAI-compatible.
+    from openai import OpenAI  # Gemini, Groq, OpenRouter and Ollama are all OpenAI-compatible.
 
     client = OpenAI(
         base_url=os.getenv("SATQUERY_LLM_BASE_URL", DEFAULT_BASE_URL),
