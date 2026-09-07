@@ -15,7 +15,7 @@ fastapi
 uvicorn
 pydantic
 
-# Data prep (only needed if you're re-running extraction/fine-tuning, not for serving)
+# Data prep 
 pandas
 pyarrow
 requests
