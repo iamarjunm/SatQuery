@@ -1,0 +1,7 @@
+.venv/
+vendor/
+__pycache__/
+*.py[cod]
+*.pth
+*.pt
+results/
