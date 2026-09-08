@@ -72,11 +72,20 @@ function Chip({ scene, result, dim }: { scene: SceneInfo; result: QueryResult | 
   );
 }
 
+// Sensor label for the viewer tag. A SAR scene not actually sourced from
+// Sentinel-1 is a demo stand-in (no real geocoded SAR imagery is fetched
+// today, see controller/fetch_chips.py) and must say so rather than being
+// mislabelled as real satellite data.
+function sensorLabel(scene: SceneInfo): string {
+  if (scene.modality !== 'sar') return 'Sentinel-2';
+  return scene.source === 'sentinel-1' ? 'Sentinel-1 SAR' : 'Synthetic SAR (demo)';
+}
+
 function Tag({ scene, side }: { scene: SceneInfo; side: 'left' | 'right' }) {
   return (
     <div className={`absolute top-4 ${side === 'left' ? 'left-16' : 'right-4'} bg-[#0B0C10]/80 backdrop-blur-md px-3 py-1.5 rounded-md text-xs font-medium text-white border border-[#222432] z-10 shadow-lg flex items-center gap-2`}>
       {formatDate(scene.acquired)}
-      <span className="text-slate-400">| {scene.source === 'sentinel-1' ? 'Sentinel-1 SAR' : 'Sentinel-2'}</span>
+      <span className="text-slate-400">| {sensorLabel(scene)}</span>
       {scene.cloudy && <CloudFog size={12} className="text-slate-400" />}
     </div>
   );

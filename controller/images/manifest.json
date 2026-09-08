@@ -66,7 +66,8 @@
       48.24084
     ],
     "stac_id": "S2C_33UXP_20260819_0_L2A",
-    "href": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/33/U/XP/2026/8/S2C_33UXP_20260819_0_L2A/TCI.tif"
+    "href": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/33/U/XP/2026/8/S2C_33UXP_20260819_0_L2A/TCI.tif",
+    "pair_id": "img_cloud_sar"
   },
   "jnpt_port_2023_opt": {
     "image_id": "jnpt_port_2023_opt",
@@ -567,5 +568,28 @@
     "href": "https://sentinel-cogs.s3.us-west-2.amazonaws.com/sentinel-s2-l2a-cogs/45/Q/XE/2026/2/S2C_45QXE_20260217_0_L2A/TCI.tif",
     "site": "sundarbans",
     "purpose": "mangrove wetland; land-cover VQA, water grounding"
+  },
+  "img_cloud_sar": {
+    "image_id": "img_cloud_sar",
+    "file": "img_cloud_sar.tif",
+    "preview": "img_cloud_sar.png",
+    "modality": "sar",
+    "source": "synthetic-sar-standin",
+    "acquired": "2026-08-19",
+    "resolution_m": 10,
+    "crs": "EPSG:32633",
+    "size_px": [
+      530,
+      565
+    ],
+    "bounds_epsg4326": [
+      16.34862,
+      48.189163,
+      16.421317,
+      48.24084
+    ],
+    "site": "vienna",
+    "purpose": "demo stand-in for cross_modal routing -- NOT real SAR; see make_synthetic_sar_standin.py",
+    "pair_id": "img_cloud_opt"
   }
 }
