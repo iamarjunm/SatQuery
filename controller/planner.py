@@ -273,11 +273,54 @@ def _llm_plan(query: str, session: Session) -> tuple[Plan | None, list[str]]:
 _CHANGE_WORDS = ("chang", "differ", "compar", "new", "built", "construct", "remov", "appear", "demolish")
 _FIND_WORDS = ("find", "show", "locate", "highlight", "where")
 _COUNT_WORDS = ("how many", "count", "tally", "number of")
+_CROSS_MODAL_WORDS = ("sar", "radar", "both sensors", "optical and radar", "cross-modal", "cross modal")
 
 
 def _keyword_plan(query: str, session: Session) -> Plan:
     q = query.lower()
     ids = session.ids()
+
+    # Sensor selection as a planning decision (Sec 5 rule), checked first so an
+    # explicit both-sensors request wins over an incidental _CHANGE_WORDS
+    # match ("built-up" contains "built"). change_detect and cross_modal are
+    # not actually in tension in practice -- one compares two dates of the
+    # same sensor, the other fuses two sensors of (presumably) the same date.
+    optical_sar_pairs = []
+    for candidate_id in ids:
+        scene = session.get(candidate_id)
+        if scene.modality != "optical":
+            continue
+        counterpart = session.counterpart(candidate_id)
+        if counterpart is not None and counterpart.modality == "sar":
+            optical_sar_pairs.append((scene, counterpart))
+
+    if optical_sar_pairs:
+        explicit_request = any(w in q for w in _CROSS_MODAL_WORDS)
+        # Sec 5's cloud trigger is about the scene a plain query would
+        # otherwise land on (the same default used below, ids[0]) -- not
+        # "a cloudy pair exists somewhere in the session". Scanning the
+        # whole session would hijack unrelated find/tally/change queries
+        # into cross_modal just because some other cloudy scene happens to
+        # be loaded alongside them.
+        default_id = ids[0] if ids else None
+        default_pair = next((p for p in optical_sar_pairs if p[0].image_id == default_id), None)
+        cloud_triggered = default_pair is not None and default_pair[0].cloudy
+        if explicit_request or cloud_triggered:
+            optical_scene, sar_scene = default_pair or optical_sar_pairs[0]
+            raw = {
+                "steps": [{"id": "s1", "tool": "cross_modal",
+                           "args": {"optical_image_id": optical_scene.image_id,
+                                    "sar_image_id": sar_scene.image_id,
+                                    "phrase": _guess_phrase(q) or "built-up areas"}}],
+                "answer_from": "s1",
+                "reasoning": (
+                    "keyword fallback: default optical scene is cloudy and a "
+                    "paired SAR scene is loaded, routed to cross_modal"
+                    if cloud_triggered else
+                    "keyword fallback: query names both sensors, routed to cross_modal"
+                ),
+            }
+            return Plan.from_dict(raw, source="fallback", provider="keywords")
 
     # Prefer a same-area optical pair, oldest first, for anything chained or
     # compared -- without one there is nothing sensible to fall back to.

@@ -1,14 +1,22 @@
-"""GeoChat agent: the VQA and grounding services, backed by GeoChat-7B.
+"""GeoChat agent: the VQA, grounding and cross-modal services, backed by GeoChat-7B.
 
 Speaks the team contract the controller expects (see controller/README.md):
 
-    POST /vqa     {image_id, question}  -> {answer, confidence}
-    POST /ground  {image_id, phrase}    -> {objects: [{id, label, geometry, confidence}]}
+    POST /vqa          {image_id, question}                       -> {answer, confidence}
+    POST /ground       {image_id, phrase}                          -> {objects: [{id, label, geometry, confidence}]}
+    POST /cross_modal  {optical_image_id, sar_image_id, phrase}    -> {regions: [{label, geometry, confidence}], summary}
 
 wrapped as {"status": "success", "result": {...}}. Every geometry is a GeoJSON
 Polygon in EPSG:4326. GeoChat answers in pixel space (boxes on a 0-100 grid
 with a rotation angle); the conversion to lon/lat happens here, using the
 GeoTIFF's own georeferencing, and pixel coordinates never leave this file.
+
+cross_modal runs grounding independently on the optical and SAR image of a
+co-registered pair for the same phrase, then merges: a detection confirmed by
+both sensors is reported once with a confidence boost; a detection seen in
+only one sensor is still reported at its own confidence -- often the actual
+point of combining them (cloud hides something from optical that SAR still
+sees, or vice versa), not a case to discard.
 
 Three backends:
   stub     canned answers, no GPU -- for running the service on a laptop and
@@ -53,7 +61,7 @@ from PIL import Image
 HERE = Path(__file__).resolve().parent
 DEFAULT_IMAGES = HERE.parents[1] / "controller" / "images"
 DEFAULT_CACHE = HERE / "cache"
-PORTS = {"vqa": 8001, "ground": 8002}  # the controller's defaults, see controller/tools.py
+PORTS = {"vqa": 8001, "ground": 8002, "cross_modal": 8004}  # the controller's defaults, see controller/tools.py
 
 
 def _load_dotenv(*paths: Path) -> None:
@@ -424,7 +432,86 @@ def ground(store: ImageStore, backend: Backend, args: dict) -> dict:
     return {"objects": objects, "raw": text}
 
 
-TOOLS = {"vqa": (vqa, ("image_id", "question")), "ground": (ground, ("image_id", "phrase"))}
+# A detection in one sensor merges with one in the other when their boxes
+# overlap by at least this much (intersection-over-union). Below this they are
+# reported as separate, single-sensor detections rather than forced together.
+CROSS_MODAL_IOU_THRESHOLD = 0.3
+
+# Added to the higher of the two individual confidences when both sensors
+# independently detect the same region -- real agreement between two
+# different measurements, not a guess -- capped at 1.0.
+CROSS_MODAL_AGREEMENT_BONUS = 0.15
+
+
+def _iou(a, b) -> float:
+    if not a.intersects(b):
+        return 0.0
+    intersection = a.intersection(b).area
+    union = a.union(b).area
+    return intersection / union if union > 0 else 0.0
+
+
+def cross_modal(store: ImageStore, backend: Backend, args: dict) -> dict:
+    from shapely.geometry import shape
+
+    optical_id, sar_id = args["optical_image_id"], args["sar_image_id"]
+    phrase = str(args["phrase"])
+
+    optical = ground(store, backend, {"image_id": optical_id, "phrase": phrase})["objects"]
+    sar = ground(store, backend, {"image_id": sar_id, "phrase": phrase})["objects"]
+    optical_shapes = [shape(r["geometry"]) for r in optical]
+    sar_shapes = [shape(r["geometry"]) for r in sar]
+
+    regions = []
+    matched_sar: set[int] = set()
+    both_count = 0
+
+    for opt_r, opt_shape in zip(optical, optical_shapes):
+        best_i, best_iou = None, 0.0
+        for i, sar_shape in enumerate(sar_shapes):
+            if i in matched_sar:
+                continue
+            iou = _iou(opt_shape, sar_shape)
+            if iou > best_iou:
+                best_i, best_iou = i, iou
+
+        if best_i is not None and best_iou >= CROSS_MODAL_IOU_THRESHOLD:
+            matched_sar.add(best_i)
+            sar_r = sar[best_i]
+            both_count += 1
+            confidence = round(min(1.0, max(opt_r["confidence"], sar_r["confidence"]) + CROSS_MODAL_AGREEMENT_BONUS), 3)
+            # The higher-confidence sensor's own box is kept as the reported
+            # geometry rather than a synthetic union/intersection shape, which
+            # can self-intersect or balloon in area for two boxes that only
+            # partially overlap.
+            geometry = opt_r["geometry"] if opt_r["confidence"] >= sar_r["confidence"] else sar_r["geometry"]
+            regions.append({"label": f"{phrase} (optical+SAR)", "geometry": geometry, "confidence": confidence})
+        else:
+            regions.append({"label": f"{phrase} (optical only)", "geometry": opt_r["geometry"], "confidence": opt_r["confidence"]})
+
+    for i, sar_r in enumerate(sar):
+        if i not in matched_sar:
+            regions.append({"label": f"{phrase} (SAR only)", "geometry": sar_r["geometry"], "confidence": sar_r["confidence"]})
+
+    total = len(regions)
+    if total:
+        summary = (
+            f"Found {total} instance{'s' if total != 1 else ''} of '{phrase}': "
+            f"{both_count} confirmed by both optical and SAR, "
+            f"{len(optical) - both_count} seen only in optical, "
+            f"{len(sar) - both_count} seen only in SAR."
+        )
+    else:
+        summary = f"No instances of '{phrase}' found in either the optical or SAR image."
+
+    return {"regions": regions, "summary": summary}
+
+
+TOOLS = {
+    "vqa": (vqa, ("image_id", "question")),
+    "ground": (ground, ("image_id", "phrase")),
+    "cross_modal": (cross_modal, ("optical_image_id", "sar_image_id", "phrase")),
+}
 
 
 def respond(store: ImageStore, backend: Backend, tool: str, args: Any,
@@ -438,8 +525,10 @@ def respond(store: ImageStore, backend: Backend, tool: str, args: Any,
     missing = [k for k in required if k not in args]
     if missing:
         return 400, {"status": "error", "error": f"{tool}: missing {missing}"}
-    if args["image_id"] not in store:
-        return 404, {"status": "error", "error": f"{tool}: image {args['image_id']!r} is not loaded"}
+    for key in required:
+        if key == "image_id" or key.endswith("_image_id"):
+            if args[key] not in store:
+                return 404, {"status": "error", "error": f"{tool}: image {args[key]!r} is not loaded"}
     call_args = {k: args[k] for k in required}
     if cache is not None:
         hit = cache.get(backend.name, tool, call_args)
