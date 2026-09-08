@@ -1,0 +1,34 @@
+# change_detection service — Python 3.11
+#
+# torch/torchvision are intentionally NOT pinned here. Install them first from
+# the CUDA wheel index that matches your driver, then run this file:
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+#   pip install -r requirements.txt
+# Omitting the index gives the CPU-only build. See setup.md.
+
+# --- model / inference (BIT_CD) ---
+torch
+torchvision
+einops
+numpy
+opencv-python
+
+# --- vendor/BIT_CD transitive imports ---
+# Not declared by upstream, but imported by misc/imutils.py, misc/torchutils.py
+# and the dataset code. Without these, demo.py fails at import time.
+matplotlib
+imageio
+scikit-image
+scipy
+tifffile
+
+# --- geospatial I/O ---
+rasterio
+
+# --- service layer ---
+fastapi
+uvicorn[standard]
+
+# --- tests ---
+# Required by fastapi.testclient.TestClient (test_api.py).
+httpx
