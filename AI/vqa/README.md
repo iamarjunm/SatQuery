@@ -33,13 +33,16 @@ accordingly for whichever one you're pointing the controller at.
 
 2. **Clone GeoChat and apply the compatibility patch.** GeoChat's code predates
    transformers 5.x by about two years; `geochat_transformers5_compat.patch`
-   fixes four real incompatibilities found by actually running it (an unused
-   MPT backend import that no longer builds, a deprecated quantization kwarg,
-   a vision-tower loader that broke under meta-device model construction, and
-   — the one that actually mattered for output quality — missing
-   `cache_position`/`position_ids` resync during generation, which silently
-   produced coherent-looking but *content-free* garbage without ever raising
-   an error):
+   fixes real incompatibilities found by actually running it end to end
+   (inference *and* fine-tuning) — an unused MPT backend import that no
+   longer builds, a deprecated quantization kwarg, a vision-tower loader
+   that broke under meta-device model construction, missing
+   `cache_position`/`position_ids` resync during generation (silently
+   produced coherent-looking but *content-free* garbage without ever
+   raising), stale `Trainer`/sampler/checkpoint APIs, and three more hit
+   specifically when loading a LoRA checkpoint (device_map re-dispatch,
+   a stale `quantization_config` carried over from the training run, and
+   dtype drift after `merge_and_unload()`):
 
    ```bash
    git clone https://github.com/mbzuai-oryx/GeoChat.git
@@ -81,11 +84,35 @@ curl -s -X POST http://127.0.0.1:8011/vqa -H "Content-Type: application/json" \
 # {"answer":"The type of land cover that dominates this image is baseball fields.","confidence":0.897...}
 ```
 
+## Loading a fine-tuned checkpoint
+
+`geochat/mm_utils.py`'s `get_model_name_from_path()` decides which loading
+branch runs based on whether the checkpoint directory's *name* contains the
+substring `"geochat"` — a directory named e.g. `vqa-lora` silently takes the
+wrong (generic, non-quantized, non-multimodal) code path and fails with
+confusing offload errors that have nothing to do with the real problem. Name
+LoRA output/checkpoint directories so they contain `geochat`, e.g.
+`geochat-vqa-lora`.
+
+## Fine-tuning results (QLoRA on BigEarthNet.txt, capped to fit ~1hr/epoch)
+
+389 steps (6,200 examples, effective batch 16, r=64/alpha=16) on the local
+12GB GPU. Verified the LoRA weights are real (non-zero, ~91% of the target
+layer's dequantized values changed from base) and do shift generation on
+longer, open-ended answers. On this eval set's mostly short yes/no/mcq
+questions, though, greedy decoding picked the same argmax token as the base
+model for most examples — measurable weight change, but not yet a measurable
+accuracy change at this scale/schedule. Contains-accuracy (reference answer
+found anywhere in the free-text response) on 500 held-out examples: base
+31.8%, tuned 31.8%. Longer training / higher LoRA alpha / more data would be
+the next lever, not a fix to a code issue — the loading and eval pipeline
+itself is verified working.
+
 ## Environment variables
 
 | variable | default | effect |
 |---|---|---|
-| `SATQUERY_VQA_MODEL_PATH` | `./checkpoints/geochat-7B` | base checkpoint dir, or a LoRA adapter dir once fine-tuning lands |
+| `SATQUERY_VQA_MODEL_PATH` | `./checkpoints/geochat-7B` | base checkpoint dir, or a LoRA adapter dir (see note below) |
 | `SATQUERY_VQA_MODEL_BASE` | unset | set this to the base checkpoint dir *only* when `MODEL_PATH` is a LoRA adapter |
 | `SATQUERY_VQA_IMAGE_DIR` | `./data_store/s2_png` | where `image_id` files live |
 

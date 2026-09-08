@@ -7,10 +7,15 @@ index db33b7c..2dba717 100644
 -from .language_model.geochat_mpt import GeoChatMPTForCausalLM, GeoChatMPTConfig
 +# from .language_model.geochat_mpt import GeoChatMPTForCausalLM, GeoChatMPTConfig
 diff --git a/geochat/model/builder.py b/geochat/model/builder.py
-index 98116cd..9e03d15 100644
+index 98116cd..09567a9 100644
 --- a/geochat/model/builder.py
 +++ b/geochat/model/builder.py
-@@ -27,9 +27,8 @@ def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, l
+@@ -23,13 +23,12 @@ from geochat.model import *
+ from geochat.constants import DEFAULT_IMAGE_PATCH_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN
+ 
+ 
+-def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, load_4bit=False, device_map="auto", device="cuda"):
++def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, load_4bit=False, device_map={"": 0}, device="cuda"):
      kwargs = {"device_map": device_map}
  
      if load_8bit:
@@ -21,6 +26,43 @@ index 98116cd..9e03d15 100644
          kwargs['quantization_config'] = BitsAndBytesConfig(
              load_in_4bit=True,
              bnb_4bit_compute_dtype=torch.float16,
+@@ -45,6 +44,14 @@ def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, l
+             warnings.warn('There is `lora` in model name but no `model_base` is provided. If you are loading a LoRA model, please provide the `model_base` argument. Detailed instruction: https://github.com/haotian-liu/LLaVA#launch-a-model-worker-lora-weights-unmerged.')
+         if 'lora' in model_name.lower() and model_base is not None:
+             lora_cfg_pretrained = AutoConfig.from_pretrained(model_path)
++            # The saved LoRA checkpoint's config carries quantization_config from
++            # its own (already-quantized) training run. Reusing it here would tell
++            # from_pretrained the model_base weights it's about to load (plain fp16)
++            # are already pre-quantized, which they are not -- that mismatch is what
++            # breaks transformers' state-dict conversion. Let our own kwargs'
++            # quantization_config (on-the-fly quantization of model_base) apply instead.
++            if hasattr(lora_cfg_pretrained, "quantization_config"):
++                del lora_cfg_pretrained.quantization_config
+             tokenizer = AutoTokenizer.from_pretrained(model_base, use_fast=False)
+             print('Loading Geochat from base model...')
+             model = GeoChatLlamaForCausalLM.from_pretrained(model_base, low_cpu_mem_usage=True, config=lora_cfg_pretrained, **kwargs)
+@@ -73,9 +80,20 @@ def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, l
+ 
+             from peft import PeftModel
+             print('Loading LoRA weights...')
+-            model = PeftModel.from_pretrained(model, model_path)
++            model = PeftModel.from_pretrained(model, model_path, offload_folder="./offload_tmp", max_memory={0: "11GiB", "cpu": "32GiB"})
+             print('Merging LoRA weights...')
+             model = model.merge_and_unload()
++            # merge_and_unload() dequantizes and merges only the LoRA-targeted
++            # linear layers; different ones came out in different float dtypes
++            # (this run's non_lora_trainables.bin overwrote some in bf16 while
++            # others stayed the dequantization dtype), and unmerged modules
++            # (vision tower etc.) are still legitimately 4-bit-quantized
++            # bitsandbytes Params4bit tensors that must not be touched. Cast
++            # every *other* floating-point parameter to one consistent dtype.
++            from bitsandbytes.nn import Params4bit
++            for param in model.parameters():
++                if not isinstance(param, Params4bit) and param.is_floating_point() and param.dtype != torch.float16:
++                    param.data = param.data.to(torch.float16)
+             print('Model is loaded...')
+         elif model_base is not None:
+             # this may be mm projector only
 diff --git a/geochat/model/geochat_arch.py b/geochat/model/geochat_arch.py
 index 1dceb11..7c7920a 100644
 --- a/geochat/model/geochat_arch.py
@@ -39,7 +81,7 @@ index 1dceb11..7c7920a 100644
  
          if type(images) is list or images.ndim == 5:
 diff --git a/geochat/model/language_model/geochat_llama.py b/geochat/model/language_model/geochat_llama.py
-index 2bbdb02..c511ff1 100644
+index 2bbdb02..2ba2594 100644
 --- a/geochat/model/language_model/geochat_llama.py
 +++ b/geochat/model/language_model/geochat_llama.py
 @@ -57,14 +57,18 @@ class GeoChatLlamaForCausalLM(LlamaForCausalLM, GeoChatMetaForCausalLM):
@@ -61,7 +103,7 @@ index 2bbdb02..c511ff1 100644
      ) -> Union[Tuple, CausalLMOutputWithPast]:
          output_attentions = output_attentions if output_attentions is not None else self.config.output_attentions
          output_hidden_states = (
-@@ -72,22 +76,30 @@ class GeoChatLlamaForCausalLM(LlamaForCausalLM, GeoChatMetaForCausalLM):
+@@ -72,22 +76,37 @@ class GeoChatLlamaForCausalLM(LlamaForCausalLM, GeoChatMetaForCausalLM):
          )
          return_dict = return_dict if return_dict is not None else self.config.use_return_dict
  
@@ -89,11 +131,18 @@ index 2bbdb02..c511ff1 100644
          hidden_states = outputs[0]
 -        logits = self.lm_head(hidden_states)
 +        slice_indices = slice(-logits_to_keep, None) if isinstance(logits_to_keep, int) else logits_to_keep
-+        logits = self.lm_head(hidden_states[:, slice_indices, :])
++        if self.lm_head.weight.dtype != hidden_states.dtype:
++            logits = torch.nn.functional.linear(
++                hidden_states[:, slice_indices, :].to(self.lm_head.weight.dtype),
++                self.lm_head.weight,
++                self.lm_head.bias,
++            ).to(hidden_states.dtype)
++        else:
++            logits = self.lm_head(hidden_states[:, slice_indices, :])
  
          loss = None
          if labels is not None:
-@@ -117,24 +129,30 @@ class GeoChatLlamaForCausalLM(LlamaForCausalLM, GeoChatMetaForCausalLM):
+@@ -117,24 +136,30 @@ class GeoChatLlamaForCausalLM(LlamaForCausalLM, GeoChatMetaForCausalLM):
      def prepare_inputs_for_generation(
          self, input_ids, past_key_values=None, attention_mask=None, inputs_embeds=None, **kwargs
      ):
