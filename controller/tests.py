@@ -1156,6 +1156,31 @@ def test_planner_fallback_defaults_to_vqa_when_nothing_matches():
     assert plan.steps[0].tool == "vqa"
 
 
+def test_planner_fallback_routes_explicit_sensor_request_to_cross_modal():
+    plan = planner.plan_query("Fuse the optical and radar imagery to find water", demo_session())
+    assert plan.steps[0].tool == "cross_modal"
+    assert plan.steps[0].args["optical_image_id"] == "img_2026_opt"
+    assert plan.steps[0].args["sar_image_id"] == "img_2026_sar"
+
+
+def test_planner_fallback_cross_modal_ignores_an_unrelated_cloudy_pair():
+    """demo_session() always carries a cloudy img_cloud_opt/img_cloud_sar
+    pair; a plain query about the (non-cloudy) default scene must not be
+    hijacked into cross_modal just because that unrelated pair is loaded."""
+    plan = planner.plan_query("Find all the buildings", demo_session())
+    assert plan.steps[0].tool == "ground"
+
+
+def test_planner_fallback_routes_to_cross_modal_when_default_scene_is_cloudy():
+    demo = demo_session()
+    session = Session([demo.get("img_cloud_opt"), demo.get("img_cloud_sar")])
+    plan = planner.plan_query("Describe this scene", session)
+    assert plan.steps[0].tool == "cross_modal"
+    assert plan.steps[0].args["optical_image_id"] == "img_cloud_opt"
+    assert plan.steps[0].args["sar_image_id"] == "img_cloud_sar"
+    assert "cloudy" in plan.reasoning
+
+
 def test_planner_rejects_blank_query():
     try:
         planner.plan_query("   ", demo_session())
